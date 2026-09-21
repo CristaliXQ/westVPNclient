@@ -26,12 +26,13 @@ def is_regular_server(srv):
     return True
 
 def find_xray_core():
-    bin_path = os.path.normpath(os.path.join(DIR, "..", "bin", "xraycore.exe"))
-    if os.path.exists(bin_path):
-        return bin_path
-    local_bin = os.path.join(DIR, "xraycore.exe")
-    if os.path.exists(local_bin):
-        return local_bin
+    for name in ["xraycore.exe", "xray.exe"]:
+        bin_path = os.path.normpath(os.path.join(DIR, "..", "bin", name))
+        if os.path.exists(bin_path):
+            return bin_path
+        local_bin = os.path.join(DIR, name)
+        if os.path.exists(local_bin):
+            return local_bin
     v2raytun_temp = os.path.expandvars(r"%LOCALAPPDATA%\Temp\v2RayTun\xraycore.exe")
     if os.path.exists(v2raytun_temp):
         return v2raytun_temp
