@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>West VPN - Настройки</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo-box">
+        <div class="logo-icon">W</div>
+        <h1>West VPN - Настройки</h1>
+      </div>
+      <button class="btn btn-primary" id="saveBtn">Сохранить изменения</button>
+    </header>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="routing">Маршрутизация сайтов</button>
+      <button class="tab-btn" data-tab="subscription">Подписка и Серверы</button>
+      <button class="tab-btn" data-tab="connection">Порты и West Core</button>
+    </div>
+
+    <!-- Tab 1: Routing -->
+    <section class="tab-content active" id="tab-routing">
+      <div class="card">
+        <h2>Сайты через VPN (Whitelist)</h2>
+        <p class="desc">Используется в режиме «Сайты из списка». Каждый домен с новой строки. Поддерживаются поддомены (например, youtube.com охватывает *.youtube.com).</p>
+        <div class="presets-bar">
+          <span class="preset-label">Быстрые пресеты:</span>
+          <button class="btn btn-sm" id="presetMedia">+ YouTube & Discord</button>
+          <button class="btn btn-sm" id="presetSocial">+ Instagram & X (Twitter)</button>
+          <button class="btn btn-sm" id="presetAi">+ OpenAI & AI-сервисы</button>
+          <button class="btn btn-sm" id="presetTorrents">+ RuTracker & NnmClub</button>
+        </div>
+        <textarea id="whitelistInput" rows="7" placeholder="youtube.com&#10;googlevideo.com&#10;instagram.com&#10;x.com"></textarea>
+      </div>
+
+      <div class="card">
+        <h2>Исключения из VPN (Blacklist / Прямой доступ)</h2>
+        <p class="desc">Используется в режиме «Все, кроме списка». Эти сайты ВСЕГДА открываются напрямую, минуя VPN.</p>
+        <div class="presets-bar">
+          <span class="preset-label">Быстрые пресеты:</span>
+          <button class="btn btn-sm" id="presetRuServices">+ Гос & Банки (Госуслуги, Сбер, Т-Банк, ФНС)</button>
+          <button class="btn btn-sm" id="presetRuMarkets">+ Маркетплейсы (Ozon, WB, Avito, Яндекс)</button>
+        </div>
+        <textarea id="blacklistInput" rows="6" placeholder="gosuslugi.ru&#10;sberbank.ru&#10;tbank.ru&#10;yandex.ru"></textarea>
+      </div>
+    </section>
+
+    <!-- Tab 2: Subscription -->
+    <section class="tab-content" id="tab-subscription">
+      <div class="card">
+        <h2>Ссылка на подписку</h2>
+        <p class="desc">Вставьте ссылку на подписку V2Ray / Xray (URL) либо список ключей (vless://, vmess://, trojan://).</p>
+        <div class="sub-input-row">
+          <input type="text" id="subUrlInput" placeholder="https://vpn-provider.com/api/v1/client/subscribe?token=...">
+          <button class="btn btn-primary" id="loadSubBtn">Загрузить</button>
+        </div>
+        <div class="sub-manual-row">
+          <label>Или вставьте сырые ключи (по одному на строку):</label>
+          <textarea id="rawKeysInput" rows="4" placeholder="vless://...&#10;vmess://..."></textarea>
+          <button class="btn btn-secondary" id="importRawBtn">Импортировать ключи</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header-flex">
+          <h2>Список доступных локаций</h2>
+          <button class="btn btn-sm" id="pingAllBtn">Проверить пинг серверов</button>
+        </div>
+        <div class="servers-table-container">
+          <table class="servers-table">
+            <thead>
+              <tr>
+                <th>Локация / Имя</th>
+                <th>Протокол</th>
+                <th>Хост:Порт</th>
+                <th>Пинг</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody id="serversTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Connection -->
+    <section class="tab-content" id="tab-connection">
+      <div class="card">
+        <h2>Параметры прокси и подключения</h2>
+        <p class="desc">Порты локального ядра West Core (Xray).</p>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>SOCKS5 Хост</label>
+            <input type="text" id="socksHostInput" value="127.0.0.1">
+          </div>
+          <div class="form-group">
+            <label>SOCKS5 Порт (по умолчанию 10808)</label>
+            <input type="number" id="socksPortInput" value="10808">
+          </div>
+          <div class="form-group">
+            <label>HTTP Порт (по умолчанию 10809)</label>
+            <input type="number" id="httpPortInput" value="10809">
+          </div>
+          <div class="form-group">
+            <label>URL Локального Bridge</label>
+            <input type="text" id="bridgeUrlInput" value="http://127.0.0.1:19090">
+          </div>
+        </div>
+        <div class="test-row">
+          <button class="btn btn-secondary" id="testConnBtn">Проверить статус ядра</button>
+          <span id="testConnResult"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Автономный запуск</h2>
+        <p class="desc">Чтобы переключать серверы V2Ray прямо из меню браузера на любом компьютере, запустите <code>Запустить West.bat</code> из корневой папки клиента.</p>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast">Настройки сохранены</div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>West VPN</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo-box">
+        <div class="logo-icon">W</div>
+        <span class="logo-title">West</span>
+      </div>
+      <div class="status-pill" id="statusPill">
+        <span class="dot"></span>
+        <span class="text" id="statusText">Отключен</span>
+      </div>
+    </header>
+
+    <div class="power-section">
+      <button class="power-btn" id="powerBtn">
+        <svg class="power-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+          <line x1="12" y1="2" x2="12" y2="12"></line>
+        </svg>
+      </button>
+      <div class="power-hint" id="powerHint">Нажмите для подключения</div>
+    </div>
+
+    <div class="card server-card" id="serverCard">
+      <div class="card-label">Узел подключения</div>
+      <div class="server-info">
+        <div class="server-flag" id="serverFlag">🌐</div>
+        <div class="server-details">
+          <div class="server-name" id="serverName">Прямой порт 10808 (West Core)</div>
+          <div class="server-sub" id="serverSub">SOCKS5 127.0.0.1:10808</div>
+        </div>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </div>
+    </div>
+
+    <div class="card routing-card">
+      <div class="card-label">Режим маршрутизации</div>
+      <div class="mode-buttons">
+        <button class="mode-btn" data-mode="global">
+          <span>Весь браузер</span>
+        </button>
+        <button class="mode-btn" data-mode="whitelist">
+          <span>Сайты из списка</span>
+        </button>
+        <button class="mode-btn" data-mode="blacklist">
+          <span>Все, кроме списка</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="card current-domain-card" id="domainCard">
+      <div class="domain-info">
+        <span class="domain-label">Текущий сайт:</span>
+        <span class="domain-name" id="currentDomain">-</span>
+      </div>
+      <button class="domain-action-btn" id="domainActionBtn">+ В список VPN</button>
+    </div>
+
+    <div class="footer">
+      <div class="bridge-indicator" id="bridgeIndicator" title="Статус локального ядра">
+        <span class="bridge-dot"></span>
+        <span class="bridge-text" id="bridgeText">Проверка ядра...</span>
+      </div>
+      <div class="footer-actions">
+        <button class="icon-btn" id="reloadExtBtn" title="Перезагрузить код расширения">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+          </svg>
+        </button>
+        <button class="icon-btn" id="refreshSubBtn" title="Обновить подписку">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+        <button class="icon-btn" id="settingsBtn" title="Настройки">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="serverModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">Доступные серверы</h3>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="ping-btn" id="pingModalBtn">⚡ Тест пинга</button>
+          <button class="modal-close" id="modalClose">&times;</button>
+        </div>
+      </div>
+      <div class="modal-search">
+        <input type="text" id="serverSearch" placeholder="Поиск локации...">
+      </div>
+      <div class="server-list" id="serverList"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

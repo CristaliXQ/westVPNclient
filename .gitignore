@@ -1,0 +1,16 @@
+# State and temporary runtime files
+bridge_state.json
+connection.json
+test_config.json
+*.log
+
+# Private keys
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+
+# OS files
+Thumbs.db
+.DS_Store
