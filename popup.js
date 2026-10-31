@@ -1,468 +1,770 @@
-let appState = null;
-let currentTabHost = "";
+let appConfig = null;
+let currentTabDomain = "";
+let currentDomainSubTab = "proxy";
+let serverPings = {};
 
-function isRegularServer(srv) {
-  const n = (srv.name || "").toLowerCase();
-  const a = (srv.address || "").toLowerCase();
-  return !n.includes("бел") && !n.includes("white") && a !== "daysleft";
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add("show");
+  setTimeout(() => {
+    toast.classList.remove("show");
+  }, 2500);
 }
 
-function extractRootDomain(hostname) {
-  if (!hostname) return "";
-  const parts = hostname.split(".");
-  if (parts.length <= 2) return hostname;
-  return parts.slice(-2).join(".");
+async function saveConfig() {
+  await chrome.storage.local.set({ config: appConfig });
+  chrome.runtime.sendMessage({ type: "APPLY_PROXY" }, () => {
+    if (chrome.runtime.lastError) {}
+  });
 }
 
-function decodeBase64Utf8(str) {
-  str = str.trim().replace(/-/g, "+").replace(/_/g, "/");
-  while (str.length % 4) str += "=";
-  const binary = atob(str);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder("utf-8").decode(bytes);
-}
+function updateBadgeAndUI() {
+  const modeBadge = document.getElementById("modeBadge");
+  const masterToggle = document.getElementById("masterToggle");
+  const coreStatusText = document.getElementById("coreStatusText");
+  const activeHeader = document.getElementById("activeServerHeader");
+  const activeFlag = document.getElementById("activeServerFlag");
+  const activePing = document.getElementById("activeServerPing");
 
-function parseV2RayUrl(url) {
-  url = url.trim();
-  if (url.startsWith("vless://")) {
-    let rest = url.slice(8);
-    let name = "";
-    const hashIdx = rest.indexOf("#");
-    if (hashIdx !== -1) {
-      try {
-        name = decodeURIComponent(rest.slice(hashIdx + 1)).trim();
-      } catch (e) {
-        name = rest.slice(hashIdx + 1).trim();
-      }
-      rest = rest.slice(0, hashIdx);
+  if (masterToggle) masterToggle.checked = appConfig.enabled;
+
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === appConfig.mode);
+  });
+
+  if (!appConfig.enabled || appConfig.mode === "direct") {
+    if (modeBadge) {
+      modeBadge.textContent = "OFF";
+      modeBadge.className = "badge";
     }
-    let queryStr = "";
-    const qIdx = rest.indexOf("?");
-    if (qIdx !== -1) {
-      queryStr = rest.slice(qIdx + 1);
-      rest = rest.slice(0, qIdx);
+  } else if (appConfig.mode === "all") {
+    if (modeBadge) {
+      modeBadge.textContent = "ALL";
+      modeBadge.className = "badge on";
     }
-    const atIdx = rest.indexOf("@");
-    if (atIdx === -1) return null;
-    const uuid = rest.slice(0, atIdx);
-    const hostPort = rest.slice(atIdx + 1);
-    const colonIdx = hostPort.lastIndexOf(":");
-    let address = hostPort;
-    let port = 443;
-    if (colonIdx !== -1) {
-      address = hostPort.slice(0, colonIdx);
-      port = parseInt(hostPort.slice(colonIdx + 1)) || 443;
+  } else {
+    if (modeBadge) {
+      modeBadge.textContent = "PAC";
+      modeBadge.className = "badge on";
     }
-    const item = {
-      protocol: "vless",
-      name: name || address,
-      address,
-      port,
-      uuid,
-      params: queryStr ? Object.fromEntries(new URLSearchParams(queryStr).entries()) : {},
-      raw: url
-    };
-    return isRegularServer(item) ? item : null;
   }
-  if (url.startsWith("trojan://")) {
-    let rest = url.slice(9);
-    let name = "";
-    const hashIdx = rest.indexOf("#");
-    if (hashIdx !== -1) {
-      try {
-        name = decodeURIComponent(rest.slice(hashIdx + 1)).trim();
-      } catch (e) {
-        name = rest.slice(hashIdx + 1).trim();
-      }
-      rest = rest.slice(0, hashIdx);
-    }
-    let queryStr = "";
-    const qIdx = rest.indexOf("?");
-    if (qIdx !== -1) {
-      queryStr = rest.slice(qIdx + 1);
-      rest = rest.slice(0, qIdx);
-    }
-    const atIdx = rest.indexOf("@");
-    if (atIdx === -1) return null;
-    const password = rest.slice(0, atIdx);
-    const hostPort = rest.slice(atIdx + 1);
-    const colonIdx = hostPort.lastIndexOf(":");
-    let address = hostPort;
-    let port = 443;
-    if (colonIdx !== -1) {
-      address = hostPort.slice(0, colonIdx);
-      port = parseInt(hostPort.slice(colonIdx + 1)) || 443;
-    }
-    const item = {
-      protocol: "trojan",
-      name: name || address,
-      address,
-      port,
-      password,
-      params: queryStr ? Object.fromEntries(new URLSearchParams(queryStr).entries()) : {},
-      raw: url
-    };
-    return isRegularServer(item) ? item : null;
+
+  const coreMode = appConfig.coreMode || "auto";
+  let coreLabel = `${appConfig.proxyHost || "127.0.0.1"}:${appConfig.proxyPort || 10818} • SOCKS5`;
+  if (coreMode === "external") {
+    coreLabel = "127.0.0.1:10808 • v2RayTun";
+  } else if (coreMode === "auto") {
+    coreLabel = `${appConfig.proxyPort || 10818} -> 10808 (Авто)`;
   }
-  if (url.startsWith("vmess://")) {
-    try {
-      const b64 = url.slice(8);
-      const json = JSON.parse(decodeBase64Utf8(b64));
-      const item = {
-        protocol: "vmess",
-        name: json.ps || json.add,
-        address: json.add,
-        port: parseInt(json.port),
-        uuid: json.id,
-        params: json,
-        raw: url
+  if (coreStatusText) coreStatusText.textContent = coreLabel;
+
+  const serversBadge = document.getElementById("serversCountBadge");
+  if (serversBadge) serversBadge.textContent = (appConfig.servers || []).length;
+
+  const activeSrv = (appConfig.servers || []).find(s => s.id === appConfig.activeServerId) || appConfig.activeServer || (appConfig.servers || [])[0];
+  if (activeHeader && activeSrv) {
+    const sName = cleanServerName(activeSrv.name);
+    activeHeader.textContent = sName || "Подключен";
+    if (activeFlag) activeFlag.textContent = activeSrv.flag || extractFlag(activeSrv.name, activeSrv.host);
+    const pingVal = serverPings[activeSrv.id];
+    if (activePing) {
+      activePing.textContent = pingVal ? `${pingVal} ms` : "";
+    }
+  }
+}
+
+function updateCurrentSiteBar() {
+  const domainEl = document.getElementById("currentDomain");
+  const statusEl = document.getElementById("currentSiteStatus");
+  const btnEl = document.getElementById("currentSiteBtn");
+  if (!domainEl || !statusEl || !btnEl) return;
+
+  if (!currentTabDomain) {
+    domainEl.textContent = "Служебная страница";
+    statusEl.textContent = "Direct";
+    statusEl.className = "site-status";
+    btnEl.style.display = "none";
+    return;
+  }
+
+  domainEl.textContent = currentTabDomain;
+  btnEl.style.display = "inline-flex";
+
+  const isLan = currentTabDomain === "localhost" ||
+    currentTabDomain === "127.0.0.1" ||
+    currentTabDomain.endsWith(".local") ||
+    currentTabDomain.endsWith(".lan") ||
+    currentTabDomain.startsWith("192.168.") ||
+    currentTabDomain.startsWith("10.");
+  if (isLan) {
+    statusEl.textContent = "LAN (Direct)";
+    statusEl.className = "site-status";
+    btnEl.style.display = "none";
+    return;
+  }
+
+  const isYt = ["youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com", "gvt1.com", "youtube-nocookie.com", "yt.be", "youtubekids.com", "wide-youtube.l.google.com", "jnn-pa.googleapis.com"].some(
+    d => currentTabDomain === d || currentTabDomain.endsWith("." + d)
+  );
+
+  if (isYt) {
+    if (appConfig.youtubeDirect !== false) {
+      statusEl.textContent = "Zapret (Direct)";
+      statusEl.className = "site-status";
+      statusEl.style.color = "#00bcd4";
+      statusEl.style.borderColor = "#00bcd4";
+      btnEl.textContent = "В VPN";
+      btnEl.onclick = async () => {
+        appConfig.youtubeDirect = false;
+        if (!appConfig.proxyDomains.includes(currentTabDomain)) {
+          appConfig.proxyDomains.push(currentTabDomain);
+        }
+        appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(
+          d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
+        );
+        await saveConfig();
+        renderAll();
+        showToast("YouTube переключен в VPN");
       };
-      return isRegularServer(item) ? item : null;
-    } catch (e) {
-      return null;
+    } else {
+      statusEl.textContent = "В VPN";
+      statusEl.className = "site-status proxy";
+      statusEl.style.color = "";
+      statusEl.style.borderColor = "";
+      btnEl.textContent = "В Direct";
+      btnEl.onclick = async () => {
+        appConfig.youtubeDirect = true;
+        await saveConfig();
+        renderAll();
+        showToast("YouTube переключен на Zapret (Direct)");
+      };
+    }
+    return;
+  }
+
+  const inProxy = (appConfig.proxyDomains || []).some(
+    d => currentTabDomain === d || currentTabDomain.endsWith("." + d)
+  );
+  const inBypass = (appConfig.bypassDomains || []).some(
+    d => currentTabDomain === d || currentTabDomain.endsWith("." + d)
+  );
+
+  if (inProxy) {
+    statusEl.textContent = "В VPN";
+    statusEl.className = "site-status proxy";
+    statusEl.style.color = "";
+    statusEl.style.borderColor = "";
+    btnEl.textContent = "В Direct";
+    btnEl.onclick = async () => {
+      appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(
+        d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
+      );
+      if (!appConfig.bypassDomains.includes(currentTabDomain)) {
+        appConfig.bypassDomains.push(currentTabDomain);
+      }
+      await saveConfig();
+      renderAll();
+      showToast(`${currentTabDomain} исключен в Direct`);
+    };
+  } else if (inBypass) {
+    statusEl.textContent = "В Direct";
+    statusEl.className = "site-status";
+    statusEl.style.color = "";
+    statusEl.style.borderColor = "";
+    btnEl.textContent = "В VPN";
+    btnEl.onclick = async () => {
+      appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(
+        d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
+      );
+      if (!appConfig.proxyDomains.includes(currentTabDomain)) {
+        appConfig.proxyDomains.push(currentTabDomain);
+      }
+      await saveConfig();
+      renderAll();
+      showToast(`${currentTabDomain} переключен в VPN`);
+    };
+  } else {
+    if (appConfig.mode === "all") {
+      statusEl.textContent = "В VPN (Все)";
+      statusEl.className = "site-status proxy";
+      btnEl.textContent = "В Direct";
+      btnEl.onclick = async () => {
+        if (!appConfig.bypassDomains.includes(currentTabDomain)) {
+          appConfig.bypassDomains.push(currentTabDomain);
+        }
+        await saveConfig();
+        renderAll();
+        showToast(`${currentTabDomain} добавлен в исключения`);
+      };
+    } else {
+      statusEl.textContent = "Direct (По умолчанию)";
+      statusEl.className = "site-status";
+      btnEl.textContent = "В VPN";
+      btnEl.onclick = async () => {
+        if (!appConfig.proxyDomains.includes(currentTabDomain)) {
+          appConfig.proxyDomains.push(currentTabDomain);
+        }
+        await saveConfig();
+        renderAll();
+        showToast(`${currentTabDomain} добавлен в VPN`);
+      };
     }
   }
-  return null;
 }
 
-function parseSubscriptionText(text) {
-  let decoded = text.trim();
-  try {
-    if (!decoded.includes("://")) decoded = decodeBase64Utf8(decoded);
-  } catch (e) {}
-  const lines = decoded.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const servers = [];
-  for (const line of lines) {
-    const parsed = parseV2RayUrl(line);
-    if (parsed) servers.push(parsed);
+async function selectServer(server) {
+  if (!server) return;
+  appConfig.activeServerId = server.id;
+  appConfig.activeServer = server;
+  renderAll();
+
+  const cleanName = cleanServerName(server.name);
+  showToast(`Подключение: ${cleanName}...`);
+
+  chrome.runtime.sendMessage({ type: "SELECT_SERVER", server: server }, (res) => {
+    if (res && res.success) {
+      if (res.coreUpdated) {
+        showToast(`✔ Активен: ${cleanName}`);
+      } else if (res.message && res.message !== "OK") {
+        showToast(`⚠️ ${res.message}`);
+      } else {
+        showToast(`✔ Выбран в PAC (${cleanName})`);
+      }
+    } else {
+      showToast(`Ошибка: ${res ? (res.error || res.message) : "Таймаут"}`);
+    }
+  });
+}
+
+function renderServersList() {
+  const container = document.getElementById("serversListContainer");
+  if (!container) return;
+  const search = (document.getElementById("serverSearchInput")?.value || "").trim().toLowerCase();
+  const servers = appConfig.servers || [];
+  const filtered = search
+    ? servers.filter(s => s.name.toLowerCase().includes(search) || (s.proto && s.proto.includes(search)) || (s.sni && s.sni.includes(search)) || (s.host && s.host.includes(search)))
+    : servers;
+
+  container.innerHTML = "";
+  const statusTxt = document.getElementById("subStatusText");
+  if (statusTxt) statusTxt.textContent = appConfig.subscriptionInfo || "Подписка активна";
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:20px; color:#666;">${search ? "Серверов не найдено" : "Нет серверов"}</div>`;
+    return;
   }
-  return servers;
+
+  filtered.forEach(server => {
+    const card = document.createElement("div");
+    const isActive = server.id === appConfig.activeServerId || (appConfig.activeServer && appConfig.activeServer.id === server.id);
+    card.className = "server-card" + (isActive ? " active" : "");
+
+    const proto = (server.proto || "vless").toLowerCase();
+    const cleanName = cleanServerName(server.name);
+    const flag = server.flag || extractFlag(server.name, server.host);
+
+    const pingVal = serverPings[server.id];
+    let pingHtml = `<span class="ping-pill none">-- ms</span>`;
+    if (pingVal !== undefined) {
+      if (pingVal === null) {
+        pingHtml = `<span class="ping-pill slow">✕ Оффлайн</span>`;
+      } else if (pingVal < 60) {
+        pingHtml = `<span class="ping-pill fast">⚡ ${pingVal} ms</span>`;
+      } else if (pingVal < 150) {
+        pingHtml = `<span class="ping-pill medium">⚡ ${pingVal} ms</span>`;
+      } else {
+        pingHtml = `<span class="ping-pill slow">⚡ ${pingVal} ms</span>`;
+      }
+    }
+
+    card.innerHTML = `
+      <div class="server-header">
+        <div class="server-title-box">
+          <span class="server-flag">${flag}</span>
+          <span class="server-title" title="${server.name}">${cleanName || 'Server'}</span>
+        </div>
+        <span class="proto-badge">${proto}</span>
+      </div>
+      <div class="server-details">
+        <span>${server.host}:${server.port}</span>
+        <span>SNI: ${server.sni || "-"}</span>
+      </div>
+      <div class="server-bottom-row">
+        <div>${pingHtml}</div>
+        <div style="display:flex; gap:6px;">
+          ${isActive ? '<button class="btn btn-xs btn-accent btn-select" disabled>✔ Активен</button>' : '<button class="btn btn-xs btn-primary btn-select">Подключить</button>'}
+          <button class="btn btn-xs btn-outline btn-copy" title="Копировать ключ">📋</button>
+        </div>
+      </div>
+    `;
+
+    const selectAction = (e) => {
+      e.stopPropagation();
+      if (!isActive) selectServer(server);
+    };
+
+    card.onclick = selectAction;
+    const btnSelect = card.querySelector(".btn-select");
+    if (btnSelect) btnSelect.onclick = selectAction;
+
+    card.querySelector(".btn-copy").onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(server.raw);
+        showToast("Конфигурация скопирована!");
+      } catch (err) {
+        showToast("Ошибка копирования");
+      }
+    };
+
+    container.appendChild(card);
+  });
+}
+
+function renderDomainList() {
+  const container = document.getElementById("domainListContainer");
+  if (!container) return;
+  const search = (document.getElementById("domainSearchInput")?.value || "").trim().toLowerCase();
+  const isProxy = currentDomainSubTab === "proxy";
+
+  const pCount = document.getElementById("proxyCount");
+  const bCount = document.getElementById("bypassCount");
+  if (pCount) pCount.textContent = (appConfig.proxyDomains || []).length;
+  if (bCount) bCount.textContent = (appConfig.bypassDomains || []).length;
+  
+  document.getElementById("subTabProxy")?.classList.toggle("active", isProxy);
+  document.getElementById("subTabBypass")?.classList.toggle("active", !isProxy);
+
+  const list = isProxy ? (appConfig.proxyDomains || []) : (appConfig.bypassDomains || []);
+  const filtered = search ? list.filter(d => d.includes(search)) : list;
+
+  container.innerHTML = "";
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:20px; color:#666;">${search ? "Ничего не найдено" : "Список пуст"}</div>`;
+    return;
+  }
+
+  filtered.forEach(domain => {
+    const row = document.createElement("div");
+    row.className = "domain-item";
+    row.innerHTML = `
+      <span class="domain-text">${domain}</span>
+      <button class="btn-remove" title="Удалить">×</button>
+    `;
+
+    row.querySelector(".btn-remove").onclick = async () => {
+      if (isProxy) {
+        appConfig.proxyDomains = appConfig.proxyDomains.filter(d => d !== domain);
+      } else {
+        appConfig.bypassDomains = appConfig.bypassDomains.filter(d => d !== domain);
+      }
+      await saveConfig();
+      renderAll();
+      showToast(`Домен удален`);
+    };
+
+    container.appendChild(row);
+  });
+}
+
+function renderDiagnostics(data) {
+  const srvCard = document.getElementById("diagServiceStatus");
+  const xrayCard = document.getElementById("diagXrayStatus");
+  const extCard = document.getElementById("diagExternalStatus");
+  const serverCard = document.getElementById("diagServerStatus");
+  const recsBox = document.getElementById("diagRecsBox");
+  const logsBox = document.getElementById("diagLogsBox");
+
+  if (!data) {
+    if (srvCard) { srvCard.textContent = "Не отвечает"; srvCard.className = "diag-card-status bad"; }
+    if (xrayCard) { xrayCard.textContent = "Остановлен"; xrayCard.className = "diag-card-status bad"; }
+    if (recsBox) {
+      recsBox.innerHTML = `
+        <div style="color:#ef4444; font-weight:600; margin-bottom:4px;">Служба ядра West Service не запущена!</div>
+        <div>1. Запустите файл <code>start_service.vbs</code> или <code>start_service.bat</code> в папке проекта.</div>
+        <div>2. Если запущен v2RayTun, расширение автоматически переключится на его порт 10808.</div>
+      `;
+    }
+    return;
+  }
+
+  if (srvCard) {
+    srvCard.textContent = "Работает (порт 10850)";
+    srvCard.className = "diag-card-status ok";
+  }
+
+  if (xrayCard) {
+    if (data.xrayCore && data.xrayCore.running) {
+      xrayCard.textContent = `Активен (PID ${data.xrayCore.pid || "-"})`;
+      xrayCard.className = "diag-card-status ok";
+    } else {
+      xrayCard.textContent = "Остановлен";
+      xrayCard.className = "diag-card-status bad";
+    }
+  }
+
+  if (extCard) {
+    if (data.externalCore && data.externalCore.running) {
+      extCard.textContent = `Обнаружен (порт ${data.externalCore.port})`;
+      extCard.className = "diag-card-status ok";
+    } else {
+      extCard.textContent = "Не обнаружен";
+      extCard.className = "diag-card-status warn";
+    }
+  }
+
+  if (serverCard) {
+    if (data.activeServer && data.activeServer.reachable) {
+      serverCard.textContent = `Доступен (${data.activeServer.ping} ms)`;
+      serverCard.className = "diag-card-status ok";
+    } else if (data.activeServer && data.activeServer.server) {
+      serverCard.textContent = "Таймаут (Не отвечает)";
+      serverCard.className = "diag-card-status bad";
+    } else {
+      serverCard.textContent = "Не выбран";
+      serverCard.className = "diag-card-status warn";
+    }
+  }
+
+  if (recsBox && data.recommendations) {
+    recsBox.innerHTML = data.recommendations.map((r, i) => `<div>${i + 1}. ${r}</div>`).join("");
+  }
+
+  if (logsBox && data.xrayCore && data.xrayCore.logs) {
+    logsBox.textContent = data.xrayCore.logs.length > 0 ? data.xrayCore.logs.join("\n") : "Лог пуст (ошибок нет)";
+  }
+}
+
+function renderSettings() {
+  const yt = document.getElementById("ytShieldToggle");
+  const lan = document.getElementById("lanShieldToggle");
+  const hfb = document.getElementById("httpFallbackToggle");
+  const host = document.getElementById("proxyHostInput");
+  const port = document.getElementById("proxyPortInput");
+  const hport = document.getElementById("httpPortInput");
+  const sub = document.getElementById("subUrlInput");
+  const coreMode = document.getElementById("coreModeSelect");
+
+  if (yt) yt.checked = appConfig.youtubeDirect !== false;
+  if (lan) lan.checked = appConfig.localBypass !== false;
+  if (hfb) hfb.checked = appConfig.httpFallback !== false;
+  if (host) host.value = appConfig.proxyHost || "127.0.0.1";
+  if (port) port.value = appConfig.proxyPort || 10818;
+  if (hport) hport.value = appConfig.httpPort || 10819;
+  if (sub) sub.value = appConfig.subscriptionUrl || "";
+  if (coreMode) coreMode.value = appConfig.coreMode || "auto";
+}
+
+function renderAll() {
+  updateBadgeAndUI();
+  updateCurrentSiteBar();
+  renderDomainList();
+  renderServersList();
+  renderSettings();
+}
+
+function setupEventListeners() {
+  document.getElementById("masterToggle")?.addEventListener("change", async (e) => {
+    appConfig.enabled = e.target.checked;
+    await saveConfig();
+    updateBadgeAndUI();
+  });
+
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.onclick = async () => {
+      appConfig.mode = btn.dataset.mode;
+      await saveConfig();
+      renderAll();
+    };
+  });
+
+  document.querySelectorAll(".nav-tab").forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      const targetPane = document.getElementById("tab-" + tab.dataset.tab);
+      if (targetPane) targetPane.classList.add("active");
+
+      if (tab.dataset.tab === "diagnostics") {
+        document.getElementById("runDiagBtn")?.click();
+      }
+    };
+  });
+
+  document.getElementById("subTabProxy")?.addEventListener("click", () => {
+    currentDomainSubTab = "proxy";
+    renderDomainList();
+  });
+  document.getElementById("subTabBypass")?.addEventListener("click", () => {
+    currentDomainSubTab = "bypass";
+    renderDomainList();
+  });
+
+  const addDomainAction = async () => {
+    const input = document.getElementById("newDomainInput");
+    const rawVal = input?.value.trim();
+    if (!rawVal) return;
+
+    const domain = cleanDomain(rawVal);
+    if (!domain) {
+      showToast("Некорректный домен");
+      return;
+    }
+
+    const targetType = document.getElementById("domainTargetType")?.value;
+    if (targetType === "proxy") {
+      if (!appConfig.proxyDomains.includes(domain)) {
+        appConfig.proxyDomains.unshift(domain);
+      }
+      appConfig.bypassDomains = appConfig.bypassDomains.filter(d => d !== domain);
+      currentDomainSubTab = "proxy";
+      showToast(`Добавлен: ${domain}`);
+    } else {
+      if (!appConfig.bypassDomains.includes(domain)) {
+        appConfig.bypassDomains.unshift(domain);
+      }
+      appConfig.proxyDomains = appConfig.proxyDomains.filter(d => d !== domain);
+      currentDomainSubTab = "bypass";
+      showToast(`Добавлен: ${domain}`);
+    }
+
+    if (input) input.value = "";
+    await saveConfig();
+    renderAll();
+  };
+
+  document.getElementById("addDomainBtn")?.addEventListener("click", addDomainAction);
+  document.getElementById("newDomainInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addDomainAction();
+  });
+
+  document.getElementById("domainSearchInput")?.addEventListener("input", () => renderDomainList());
+
+  const subUrlInput = document.getElementById("subUrlInput");
+  if (subUrlInput) {
+    subUrlInput.onchange = async (e) => {
+      appConfig.subscriptionUrl = e.target.value.trim();
+      await saveConfig();
+    };
+    subUrlInput.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        document.getElementById("refreshSubBtn")?.click();
+      }
+    };
+  }
+
+  document.getElementById("refreshSubBtn")?.addEventListener("click", async () => {
+    const subUrl = subUrlInput?.value.trim();
+    if (!subUrl) {
+      showToast("Введите ссылку на подписку");
+      return;
+    }
+
+    const btn = document.getElementById("refreshSubBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "...";
+    }
+
+    chrome.runtime.sendMessage({ type: "FETCH_SUBSCRIPTION", url: subUrl }, async (res) => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Обновить";
+      }
+
+      if (res && res.success) {
+        const data = await chrome.storage.local.get("config");
+        appConfig = data.config;
+        renderAll();
+        showToast(`Успешно! Серверов: ${res.count}`);
+      } else {
+        showToast("Ошибка: " + (res ? res.error : "Таймаут"));
+      }
+    });
+  });
+
+  document.getElementById("serverSearchInput")?.addEventListener("input", () => renderServersList());
+
+  // MIN PING ACTION
+  document.getElementById("minPingBtn")?.addEventListener("click", () => {
+    const btn = document.getElementById("minPingBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "⚡ Тест...";
+    }
+
+    chrome.runtime.sendMessage({
+      type: "PING_SERVERS",
+      servers: appConfig.servers || []
+    }, async (res) => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "⚡ Мин. пинг";
+      }
+
+      if (res && res.success && res.results) {
+        serverPings = res.results;
+        renderServersList();
+
+        if (res.minPingId) {
+          const fastest = (appConfig.servers || []).find(s => s.id === res.minPingId);
+          if (fastest) {
+            await selectServer(fastest);
+            showToast(`Мин. пинг: ${cleanServerName(fastest.name)} (${res.minLatency}ms)`);
+          }
+        } else {
+          showToast("Все узлы оффлайн или блокируются");
+        }
+      } else {
+        showToast("Ошибка проверки связи с ядром");
+      }
+    });
+  });
+
+  // PING ALL ACTION
+  document.getElementById("pingAllBtn")?.addEventListener("click", () => {
+    const btn = document.getElementById("pingAllBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "...";
+    }
+
+    chrome.runtime.sendMessage({
+      type: "PING_SERVERS",
+      servers: appConfig.servers || []
+    }, (res) => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🔄 Пинг";
+      }
+
+      if (res && res.success && res.results) {
+        serverPings = res.results;
+        renderServersList();
+        showToast("Пинг обновлен");
+      } else {
+        showToast("Служба ядра не ответила");
+      }
+    });
+  });
+
+  // DIAGNOSTICS ACTION
+  document.getElementById("runDiagBtn")?.addEventListener("click", () => {
+    const btn = document.getElementById("runDiagBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "...";
+    }
+
+    chrome.runtime.sendMessage({ type: "DIAGNOSE" }, (res) => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Проверить";
+      }
+
+      if (res && res.success && res.data) {
+        renderDiagnostics(res.data);
+      } else {
+        renderDiagnostics(null);
+      }
+    });
+  });
+
+  document.getElementById("coreModeSelect")?.addEventListener("change", async (e) => {
+    appConfig.coreMode = e.target.value;
+    await saveConfig();
+    updateBadgeAndUI();
+    showToast("Режим ядра сохранен");
+  });
+
+  document.getElementById("ytShieldToggle")?.addEventListener("change", async (e) => {
+    appConfig.youtubeDirect = e.target.checked;
+    await saveConfig();
+  });
+  document.getElementById("lanShieldToggle")?.addEventListener("change", async (e) => {
+    appConfig.localBypass = e.target.checked;
+    await saveConfig();
+  });
+  document.getElementById("httpFallbackToggle")?.addEventListener("change", async (e) => {
+    appConfig.httpFallback = e.target.checked;
+    await saveConfig();
+  });
+
+  document.getElementById("saveCoreSettingsBtn")?.addEventListener("click", async () => {
+    appConfig.proxyHost = document.getElementById("proxyHostInput")?.value.trim() || "127.0.0.1";
+    appConfig.proxyPort = parseInt(document.getElementById("proxyPortInput")?.value, 10) || 10818;
+    appConfig.httpPort = parseInt(document.getElementById("httpPortInput")?.value, 10) || 10819;
+    await saveConfig();
+    updateBadgeAndUI();
+    showToast("Настройки ядра сохранены");
+  });
 }
 
 async function init() {
-  appState = await chrome.runtime.sendMessage({ action: "GET_STATE" });
-  const GITHUB_DOMAINS = ["github.com", "github.io", "githubassets.com", "githubusercontent.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com"];
-  const wl = appState.whitelist || [];
-  const missing = GITHUB_DOMAINS.filter(d => !wl.includes(d));
-  if (missing.length) {
-    appState.whitelist = [...wl, ...missing];
-    await chrome.storage.local.set({ whitelist: appState.whitelist });
-    await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
+  const data = await chrome.storage.local.get("config");
+  appConfig = data.config ? { ...DEFAULT_CONFIG, ...data.config } : JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+
+  if (!appConfig.servers || appConfig.servers.length === 0) {
+    appConfig.servers = DEFAULT_CONFIG.servers;
   }
-  if (!appState.servers || appState.servers.length === 0 || appState.servers.some(s => !isRegularServer(s))) {
-    try {
-      const resp = await fetch(chrome.runtime.getURL("servers.json"));
-      let initial = await resp.json();
-      initial = initial.filter(isRegularServer);
-      if (initial && initial.length) {
-        appState.servers = initial;
-        if (!appState.activeServer || !isRegularServer(appState.activeServer)) {
-          appState.activeServer = initial[0];
-        }
-        await chrome.storage.local.set({
-          servers: initial,
-          activeServer: appState.activeServer,
-          subscriptionUrl: "https://xpnetsub.space/sub/FDffPVcmqpN42V4-"
-        });
-      }
-    } catch (e) {}
-  }
-  renderState();
-  initTabDomain();
-  checkBridge();
-}
-
-function renderState() {
-  const isConn = appState.enabled;
-  document.getElementById("powerBtn").className = "power-btn" + (isConn ? " active" : "");
-  document.getElementById("statusPill").className = "status-pill" + (isConn ? " connected" : "");
-  document.getElementById("statusText").innerText = isConn ? "Подключен" : "Отключен";
-  document.getElementById("powerHint").innerText = isConn ? "Нажмите для отключения" : "Нажмите для подключения";
-
-  document.querySelectorAll(".mode-btn").forEach(btn => {
-    btn.className = "mode-btn" + (btn.dataset.mode === appState.mode ? " active" : "");
-  });
-
-  if (appState.activeServer) {
-    document.getElementById("serverName").innerText = appState.activeServer.name || appState.activeServer.address;
-    const pingPart = appState.activeServer.ping ? ` • ${appState.activeServer.ping}ms` : "";
-    document.getElementById("serverSub").innerText = `${appState.activeServer.protocol.toUpperCase()}${pingPart} • ${appState.activeServer.address}`;
-  } else {
-    document.getElementById("serverName").innerText = "Локальный порт 10808 (West Core)";
-    document.getElementById("serverSub").innerText = `SOCKS5 ${appState.socksHost}:${appState.socksPort}`;
+  if (!appConfig.activeServer) {
+    appConfig.activeServer = appConfig.servers[0];
+    appConfig.activeServerId = appConfig.servers[0]?.id;
   }
 
-  updateDomainCard();
-}
-
-async function initTabDomain() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.startsWith("http")) {
-    document.getElementById("domainCard").style.display = "none";
-    return;
-  }
-  const u = new URL(tab.url);
-  currentTabHost = u.hostname;
-  document.getElementById("currentDomain").innerText = currentTabHost;
-  updateDomainCard();
-}
-
-function updateDomainCard() {
-  if (!currentTabHost) return;
-  const list = appState.mode === "blacklist" ? appState.blacklist : appState.whitelist;
-  const exists = list.some(d => currentTabHost === d || currentTabHost.endsWith("." + d));
-  const btn = document.getElementById("domainActionBtn");
-
-  if (exists) {
-    btn.innerText = "Удалить из списка";
-    btn.className = "domain-action-btn remove";
-  } else {
-    btn.innerText = appState.mode === "blacklist" ? "+ В исключения" : "+ В список VPN";
-    btn.className = "domain-action-btn";
-  }
-}
-
-async function checkBridge() {
-  const ind = document.getElementById("bridgeIndicator");
-  const txt = document.getElementById("bridgeText");
   try {
-    const res = await fetch(`${appState.bridgeUrl}/status`, { signal: AbortSignal.timeout(1200) });
-    if (res.ok) {
-      const data = await res.json();
-      ind.querySelector(".bridge-dot").className = "bridge-dot active";
-      txt.innerText = data.xray_running ? "Ядро активно" : "Bridge онлайн";
-      const valid = (data.servers || []).filter(isRegularServer);
-      if (valid.length && (!appState.servers || !appState.servers.length)) {
-        appState.servers = valid;
-        chrome.storage.local.set({ servers: valid });
-      }
-      return;
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].url) {
+      currentTabDomain = cleanDomain(tabs[0].url);
     }
-  } catch (e) {}
+  } catch(e) {}
 
-  ind.querySelector(".bridge-dot").className = "bridge-dot direct";
-  txt.innerText = `SOCKS5: ${appState.socksPort}`;
-}
+  setupEventListeners();
+  renderAll();
 
-document.getElementById("powerBtn").addEventListener("click", async () => {
-  const res = await chrome.runtime.sendMessage({ action: "TOGGLE" });
-  appState.enabled = res.enabled;
-  renderState();
-});
-
-document.querySelectorAll(".mode-btn").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    appState.mode = btn.dataset.mode;
-    await chrome.storage.local.set({ mode: appState.mode });
-    await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-    renderState();
+  // Listen for auto-failover server changes from background watchdog
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message && message.type === "SERVER_CHANGED" && message.server) {
+      appConfig.activeServerId = message.server.id;
+      appConfig.activeServer = message.server;
+      renderAll();
+      const cleanName = cleanServerName(message.server.name);
+      showToast(`⚡ Авто-переключение: ${cleanName}`);
+    }
   });
-});
 
-document.getElementById("domainActionBtn").addEventListener("click", async () => {
-  if (!currentTabHost) return;
-  const key = appState.mode === "blacklist" ? "blacklist" : "whitelist";
-  const list = [...appState[key]];
-  const root = extractRootDomain(currentTabHost);
-  const idx = list.findIndex(d => currentTabHost === d || currentTabHost.endsWith("." + d));
+  // Check core service state (clean reconnecting indicator without unhandled errors)
+  chrome.runtime.sendMessage({ type: "CHECK_CORE" }, (res) => {
+    if (chrome.runtime.lastError) return;
+    if (res) {
+      if (res.reconnecting) {
+        const coreStatusText = document.getElementById("coreStatusText");
+        if (coreStatusText) coreStatusText.textContent = "127.0.0.1:10818 • Переподключение...";
+      } else if (res.activeServer && res.activeServer.id !== appConfig.activeServerId) {
+        appConfig.activeServerId = res.activeServer.id;
+        appConfig.activeServer = res.activeServer;
+        renderAll();
+      }
+    }
+  });
 
-  if (idx !== -1) {
-    list.splice(idx, 1);
-  } else {
-    list.push(root);
-  }
-
-  appState[key] = list;
-  await chrome.storage.local.set({ [key]: list });
-  await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-  updateDomainCard();
-});
-
-document.getElementById("serverCard").addEventListener("click", () => {
-  renderServerList();
-  document.getElementById("serverModal").classList.add("open");
-});
-
-document.getElementById("modalClose").addEventListener("click", () => {
-  document.getElementById("serverModal").classList.remove("open");
-});
-
-document.getElementById("serverSearch").addEventListener("input", (e) => {
-  renderServerList(e.target.value.toLowerCase());
-});
-
-document.getElementById("pingModalBtn").addEventListener("click", async () => {
-  const btn = document.getElementById("pingModalBtn");
-  btn.innerText = "⏳...";
-  try {
-    const res = await fetch(`${appState.bridgeUrl}/ping_servers`, {
+  // Fast background ping for active server
+  if (appConfig.activeServer && appConfig.activeServer.host) {
+    fetch("http://127.0.0.1:10850/ping_server", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ servers: appState.servers })
-    });
-    const data = await res.json();
-    if (data.results) {
-      appState.servers.forEach((s, idx) => {
-        if (data.results[idx] !== undefined && data.results[idx] > 0) {
-          s.ping = data.results[idx];
-        }
-      });
-      appState.servers.sort((a, b) => (a.ping || 9999) - (b.ping || 9999));
-      await chrome.storage.local.set({ servers: appState.servers });
-      renderServerList();
-    }
-  } catch (e) {
-    alert("Для точного пинга запустите West Core (Start_West.bat).");
-  }
-  btn.innerText = "⚡ Тест пинга";
-});
-
-function renderServerList(filter = "") {
-  const container = document.getElementById("serverList");
-  container.innerHTML = "";
-
-  const autoItem = document.createElement("div");
-  autoItem.className = "server-item" + (appState.activeServer && appState.activeServer.isAuto ? " selected" : "");
-  autoItem.innerHTML = `
-    <div class="server-item-left">
-      <span>⚡</span>
-      <div class="server-item-title">Автоподбор (Лучшая страна)</div>
-      <span class="server-item-badge" style="background:#00e5ff;color:#0b0e14">AUTO</span>
-    </div>
-  `;
-  autoItem.onclick = async () => {
-    appState.enabled = true;
-    try {
-      const res = await fetch(`${appState.bridgeUrl}/auto_select`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ servers: appState.servers })
-      });
-      const data = await res.json();
-      if (data.server) {
-        data.server.isAuto = true;
-        appState.activeServer = data.server;
-        await chrome.storage.local.set({ activeServer: data.server, enabled: true });
-        await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-        document.getElementById("serverModal").classList.remove("open");
-        renderState();
-        return;
+      body: JSON.stringify({ host: appConfig.activeServer.host, port: appConfig.activeServer.port || 443 })
+    }).then(r => r.json()).then(data => {
+      if (data && data.success) {
+        serverPings[appConfig.activeServer.id] = data.latency;
+        const pingEl = document.getElementById("activeServerPing");
+        if (pingEl) pingEl.textContent = `${data.latency} ms`;
       }
-    } catch (e) {}
-
-    const first = (appState.servers && appState.servers[0]) ? { ...appState.servers[0], isAuto: true } : null;
-    appState.activeServer = first;
-    await chrome.storage.local.set({ activeServer: first, enabled: true });
-    await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-    document.getElementById("serverModal").classList.remove("open");
-    renderState();
-  };
-  container.appendChild(autoItem);
-
-  const defaultItem = document.createElement("div");
-  defaultItem.className = "server-item" + (!appState.activeServer ? " selected" : "");
-  defaultItem.innerHTML = `
-    <div class="server-item-left">
-      <span>⚙️</span>
-      <div class="server-item-title">Прямой порт 10808 (West Core)</div>
-      <span class="server-item-badge">DIRECT</span>
-    </div>
-  `;
-  defaultItem.onclick = async () => {
-    appState.activeServer = null;
-    appState.enabled = true;
-    await chrome.storage.local.set({ activeServer: null, enabled: true });
-    await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-    document.getElementById("serverModal").classList.remove("open");
-    renderState();
-  };
-  container.appendChild(defaultItem);
-
-  const servers = (appState.servers || []).filter(isRegularServer);
-  document.getElementById("modalTitle").innerText = `Доступные серверы (${servers.length})`;
-  servers.forEach((srv) => {
-    if (filter && !srv.name.toLowerCase().includes(filter) && !srv.address.toLowerCase().includes(filter)) return;
-    const item = document.createElement("div");
-    const isSel = appState.activeServer && !appState.activeServer.isAuto && appState.activeServer.raw === srv.raw;
-    item.className = "server-item" + (isSel ? " selected" : "");
-    const pingVal = srv.ping ? srv.ping : null;
-    let pingColor = "#00e676";
-    if (pingVal && pingVal > 130) pingColor = "#ff9800";
-    else if (pingVal && pingVal > 60) pingColor = "#ffeb3b";
-
-    item.innerHTML = `
-      <div class="server-item-left">
-        <span>🌐</span>
-        <div class="server-item-title">${srv.name || srv.address}</div>
-        <span class="server-item-badge">${(srv.protocol || "v2ray").toUpperCase()}</span>
-      </div>
-      ${pingVal ? `<span class="server-ping" style="color:${pingColor}">${pingVal}ms</span>` : ""}
-    `;
-    item.onclick = async () => {
-      srv.isAuto = false;
-      appState.activeServer = srv;
-      appState.enabled = true;
-      await chrome.storage.local.set({ activeServer: srv, enabled: true });
-      await chrome.runtime.sendMessage({ action: "APPLY_PROXY" });
-      document.getElementById("serverModal").classList.remove("open");
-      renderState();
-
-      try {
-        await fetch(`${appState.bridgeUrl}/select_server`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ server: srv })
-        });
-      } catch (e) {}
-    };
-    container.appendChild(item);
-  });
+    }).catch(() => {});
+  }
 }
 
-document.getElementById("reloadExtBtn").addEventListener("click", () => {
-  chrome.runtime.reload();
-});
-
-document.getElementById("refreshSubBtn").addEventListener("click", async () => {
-  const btn = document.getElementById("refreshSubBtn");
-  btn.style.opacity = "0.5";
-  try {
-    const res = await fetch(appState.subscriptionUrl || "https://xpnetsub.space/sub/FDffPVcmqpN42V4-");
-    const text = await res.text();
-    let servers = parseSubscriptionText(text);
-    servers = servers.filter(isRegularServer);
-    if (servers.length) {
-      appState.servers = servers;
-      if (!appState.activeServer || !isRegularServer(appState.activeServer)) appState.activeServer = servers[0];
-      await chrome.storage.local.set({ servers, activeServer: appState.activeServer });
-      alert(`Успешно обновлено! Загружено обычных серверов: ${servers.length}`);
-    }
-  } catch (e) {
-    try {
-      const res = await fetch(`${appState.bridgeUrl}/subscription`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: appState.subscriptionUrl || "https://xpnetsub.space/sub/FDffPVcmqpN42V4-" })
-      });
-      const data = await res.json();
-      const valid = (data.servers || []).filter(isRegularServer);
-      if (valid.length) {
-        appState.servers = valid;
-        if (!appState.activeServer || !isRegularServer(appState.activeServer)) appState.activeServer = valid[0];
-        await chrome.storage.local.set({ servers: valid, activeServer: appState.activeServer });
-        alert(`Обновлено через Bridge! Обычных серверов: ${valid.length}`);
-      }
-    } catch (err) {
-      alert("Не удалось загрузить подписку через сеть. Проверьте соединение.");
-    }
-  }
-  btn.style.opacity = "1";
-  renderState();
-});
-
-document.getElementById("settingsBtn").addEventListener("click", () => {
-  chrome.runtime.openOptionsPage();
-});
-
-init();
+document.addEventListener("DOMContentLoaded", init);
