@@ -384,27 +384,27 @@ def generate_xray_config(outbound_obj, custom_routes=None, pool=None):
             "outboundTag": us_tag
         })
 
-    direct_domains = [f"domain:{d}" for d, s in custom_routes.items() if s == "direct"]
-    if direct_domains:
+    # Domain-specific routes sorted by length descending so subdomains take precedence over parent domains
+    sorted_routes = sorted(custom_routes.items(), key=lambda x: len(x[0]), reverse=True)
+    rule_groups = []
+    for dom, sid in sorted_routes:
+        if not sid:
+            continue
+        clean_d = dom.strip().lower()
+        if not clean_d:
+            continue
+        tag = "direct" if sid == "direct" else (f"out_{sid}" if f"out_{sid}" in added_tags else "main")
+        if rule_groups and rule_groups[-1]["tag"] == tag:
+            rule_groups[-1]["domains"].append(f"domain:{clean_d}")
+        else:
+            rule_groups.append({"tag": tag, "domains": [f"domain:{clean_d}"]})
+
+    for rg in rule_groups:
         routing_rules.append({
             "type": "field",
             "inboundTag": ["socks-in", "http-in"],
-            "domain": direct_domains,
-            "outboundTag": "direct"
-        })
-
-    sid_to_doms = {}
-    for dom, sid in custom_routes.items():
-        if sid and sid != "direct":
-            sid_to_doms.setdefault(sid, []).append(f"domain:{dom}")
-
-    for sid, doms in sid_to_doms.items():
-        target_tag = f"out_{sid}" if f"out_{sid}" in added_tags else "main"
-        routing_rules.append({
-            "type": "field",
-            "inboundTag": ["socks-in", "http-in"],
-            "domain": doms,
-            "outboundTag": target_tag
+            "domain": rg["domains"],
+            "outboundTag": rg["tag"]
         })
 
     routing_rules.append({

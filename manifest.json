@@ -6,14 +6,15 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "west-vpn-client@wild.local",
-      "strict_min_version": "109.0"
+      "strict_min_version": "115.0"
     }
   },
   "permissions": [
     "proxy",
     "storage",
     "tabs",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

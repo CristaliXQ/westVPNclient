@@ -207,37 +207,49 @@ function updateCurrentSiteBar() {
   }
 }
 
-function populateSiteServerDropdown() {
-  const siteSelect = document.getElementById("currentSiteServerSelect");
-  if (!siteSelect || siteSelect.options.length > 2) return;
+function isLanDomain(d) {
+  if (!d) return true;
+  return d === "localhost" || d === "127.0.0.1" || d.endsWith(".local") || d.endsWith(".lan") || d.startsWith("192.168.") || d.startsWith("10.");
+}
 
+function buildServerOptionsHtml(selectedId, includeDefault = true, includeDirect = true) {
   const servers = appConfig.servers || [];
   const usServers = getUsServers(servers);
   const otherServers = servers.filter(s => !usServers.includes(s));
+  let html = "";
+
+  if (includeDefault) {
+    html += `<option value="default" ${selectedId === 'default' ? 'selected' : ''}>🌐 Основной VPN (по умолч.)</option>`;
+  }
+  if (includeDirect) {
+    html += `<option value="direct" ${selectedId === 'direct' ? 'selected' : ''}>⚡ Direct (без VPN)</option>`;
+  }
 
   if (usServers.length > 0) {
-    const usGroup = document.createElement("optgroup");
-    usGroup.label = "🇺🇸 США (для задач Gemini)";
+    html += `<optgroup label="🇺🇸 США (для задач Gemini / AI)">`;
     usServers.forEach(s => {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = `${s.flag || '🇺🇸'} ${cleanServerName(s.name)}`;
-      usGroup.appendChild(opt);
+      html += `<option value="${s.id}" ${selectedId === s.id ? 'selected' : ''}>${s.flag || '🇺🇸'} ${cleanServerName(s.name)}</option>`;
     });
-    siteSelect.appendChild(usGroup);
+    html += `</optgroup>`;
   }
 
   if (otherServers.length > 0) {
-    const allGroup = document.createElement("optgroup");
-    allGroup.label = "🌍 Все серверы подписки";
+    html += `<optgroup label="🌍 Все серверы подписки">`;
     otherServers.forEach(s => {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = `${s.flag || '🌐'} ${cleanServerName(s.name)}`;
-      allGroup.appendChild(opt);
+      html += `<option value="${s.id}" ${selectedId === s.id ? 'selected' : ''}>${s.flag || '🌐'} ${cleanServerName(s.name)}</option>`;
     });
-    siteSelect.appendChild(allGroup);
+    html += `</optgroup>`;
   }
+
+  return html;
+}
+
+function populateSiteServerDropdown() {
+  const siteSelect = document.getElementById("currentSiteServerSelect");
+  if (!siteSelect) return;
+  const currentVal = siteSelect.value;
+  siteSelect.innerHTML = buildServerOptionsHtml(currentVal, true, true);
+  if (currentVal) siteSelect.value = currentVal;
 }
 
 function updateGeminiCard() {
@@ -343,6 +355,10 @@ function renderServersList() {
     }
 
     const isUs = server.flag === "🇺🇸" || (server.name && (server.name.includes("USA") || server.name.includes("US ")));
+    const isBoundToCurrentTab = !!currentTabDomain && ((appConfig.domainRoutes || {})[currentTabDomain] === server.id);
+    const bindBtnHtml = currentTabDomain && !isLanDomain(currentTabDomain)
+      ? `<button class="btn btn-xs ${isBoundToCurrentTab ? 'btn-accent' : 'btn-outline'} btn-bind-site" title="${isBoundToCurrentTab ? 'Сервер назначен для ' + currentTabDomain : 'Привязать этот сервер к сайту ' + currentTabDomain}">${isBoundToCurrentTab ? '🎯 На сайте' : '🎯 На сайт'}</button>`
+      : '';
 
     card.innerHTML = `
       <div class="server-header">
@@ -361,7 +377,8 @@ function renderServersList() {
       </div>
       <div class="server-bottom-row">
         <div>${pingHtml}</div>
-        <div style="display:flex; gap:5px;">
+        <div style="display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end;">
+          ${bindBtnHtml}
           ${isUs ? `<button class="btn btn-xs btn-outline btn-set-gemini" title="Назначить этот сервер для Gemini Task Mode">🤖 Для Gemini</button>` : ''}
           ${isActive ? '<button class="btn btn-xs btn-accent btn-select" disabled>✔ Активен</button>' : '<button class="btn btn-xs btn-primary btn-select">Подключить</button>'}
           <button class="btn btn-xs btn-outline btn-copy" title="Копировать конфигурацию">📋</button>
@@ -377,6 +394,26 @@ function renderServersList() {
     card.onclick = selectAction;
     const btnSelect = card.querySelector(".btn-select");
     if (btnSelect) btnSelect.onclick = selectAction;
+
+    const btnBind = card.querySelector(".btn-bind-site");
+    if (btnBind) {
+      btnBind.onclick = async (e) => {
+        e.stopPropagation();
+        if (!currentTabDomain) return;
+        if (!appConfig.domainRoutes) appConfig.domainRoutes = {};
+        appConfig.domainRoutes[currentTabDomain] = server.id;
+        if (!appConfig.proxyDomains.includes(currentTabDomain)) appConfig.proxyDomains.push(currentTabDomain);
+        appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== currentTabDomain);
+        await saveConfig();
+        chrome.runtime.sendMessage({
+          type: "SET_DOMAIN_ROUTE",
+          domain: currentTabDomain,
+          serverId: server.id
+        });
+        showToast(`${currentTabDomain} ➔ ${cleanName}`);
+        renderAll();
+      };
+    }
 
     const btnGemini = card.querySelector(".btn-set-gemini");
     if (btnGemini) {
@@ -435,26 +472,45 @@ function renderDedicatedRoutesList() {
     const card = document.createElement("div");
     card.className = "domain-card";
 
-    let targetLabel = serverId;
-    let isUs = false;
-    if (serverId === "direct") {
-      targetLabel = "⚡ Direct";
-    } else {
-      const srv = servers.find(s => s.id === serverId);
-      if (srv) {
-        const flag = srv.flag || "🌐";
-        isUs = flag === "🇺🇸" || (srv.name && srv.name.includes("USA"));
-        targetLabel = `${flag} ${cleanServerName(srv.name).slice(0, 20)}`;
-      }
-    }
+    const optionsHtml = buildServerOptionsHtml(serverId, false, true);
 
     card.innerHTML = `
-      <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
+      <div class="domain-info">
         <span class="domain-name" title="${domain}">${domain}</span>
-        <span class="domain-route-tag ${isUs ? 'us-tag' : ''}">${targetLabel}</span>
       </div>
-      <button class="btn-del-domain" title="Удалить привязку">×</button>
+      <div class="domain-actions">
+        <select class="domain-server-inline-select" data-domain="${domain}" title="Сменить сервер для ${domain}">
+          ${optionsHtml}
+        </select>
+        <button class="btn-del-domain" data-domain="${domain}" title="Удалить привязку">✕</button>
+      </div>
     `;
+
+    const inlineSelect = card.querySelector(".domain-server-inline-select");
+    if (inlineSelect) {
+      inlineSelect.onchange = async (e) => {
+        const newSid = e.target.value;
+        if (!appConfig.domainRoutes) appConfig.domainRoutes = {};
+        appConfig.domainRoutes[domain] = newSid;
+        if (newSid === "direct") {
+          if (!appConfig.bypassDomains.includes(domain)) appConfig.bypassDomains.push(domain);
+          appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(d => d !== domain);
+        } else {
+          if (!appConfig.proxyDomains.includes(domain)) appConfig.proxyDomains.push(domain);
+          appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== domain);
+        }
+        await saveConfig();
+        chrome.runtime.sendMessage({
+          type: "SET_DOMAIN_ROUTE",
+          domain: domain,
+          serverId: newSid
+        });
+        const matched = servers.find(s => s.id === newSid);
+        const sName = matched ? cleanServerName(matched.name) : (newSid === 'direct' ? 'Direct' : newSid);
+        showToast(`${domain} ➔ ${sName}`);
+        renderAll();
+      };
+    }
 
     card.querySelector(".btn-del-domain").onclick = () => {
       chrome.runtime.sendMessage({ type: "REMOVE_DOMAIN_ROUTE", domain: domain }, async () => {
@@ -470,27 +526,10 @@ function renderDedicatedRoutesList() {
 
   // Populate new dedicated server select
   const select = document.getElementById("newDedicatedServerSelect");
-  if (select && select.options.length <= 1) {
-    select.innerHTML = "";
-    const usGroup = document.createElement("optgroup");
-    usGroup.label = "🇺🇸 США (Gemini Tasks)";
-    getUsServers(servers).forEach(s => {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = `${s.flag || '🇺🇸'} ${cleanServerName(s.name)}`;
-      usGroup.appendChild(opt);
-    });
-    select.appendChild(usGroup);
-
-    const allGroup = document.createElement("optgroup");
-    allGroup.label = "🌍 Все серверы";
-    servers.forEach(s => {
-      const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = `${s.flag || '🌐'} ${cleanServerName(s.name)}`;
-      allGroup.appendChild(opt);
-    });
-    select.appendChild(allGroup);
+  if (select) {
+    const curVal = select.value || (appConfig.geminiServerId || "srv_27");
+    select.innerHTML = buildServerOptionsHtml(curVal, false, true);
+    select.value = curVal;
   }
 }
 
@@ -711,6 +750,18 @@ function setupEventListeners() {
     renderAll();
   });
 
+  // Current Site Quick Toggle Button (В VPN / В Direct)
+  document.getElementById("currentSiteBtn")?.addEventListener("click", () => {
+    if (!currentTabDomain) return;
+    const siteSelect = document.getElementById("currentSiteServerSelect");
+    const isCurrentlyVpn = siteSelect && siteSelect.value !== "direct";
+    const nextVal = isCurrentlyVpn ? "direct" : "default";
+    if (siteSelect) {
+      siteSelect.value = nextVal;
+      siteSelect.dispatchEvent(new Event("change"));
+    }
+  });
+
   // Quick Gemini button on current site
   document.getElementById("geminiSiteQuickBtn")?.addEventListener("click", () => {
     if (!currentTabDomain) return;
@@ -828,7 +879,13 @@ function setupEventListeners() {
     }, async () => {
       if (!appConfig.domainRoutes) appConfig.domainRoutes = {};
       appConfig.domainRoutes[domain] = serverId;
-      if (!appConfig.proxyDomains.includes(domain)) appConfig.proxyDomains.push(domain);
+      if (serverId === "direct") {
+        if (!appConfig.bypassDomains.includes(domain)) appConfig.bypassDomains.push(domain);
+        appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(d => d !== domain);
+      } else {
+        if (!appConfig.proxyDomains.includes(domain)) appConfig.proxyDomains.push(domain);
+        appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== domain);
+      }
       input.value = "";
       await chrome.storage.local.set({ config: appConfig });
       renderAll();
@@ -840,6 +897,13 @@ function setupEventListeners() {
     appConfig.domainRoutes = {};
     await saveConfig();
     chrome.runtime.sendMessage({ type: "APPLY_PROXY" });
+    try {
+      await fetch("http://127.0.0.1:10850/set_domain_routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domainRoutes: {} })
+      });
+    } catch(e) {}
     renderAll();
     showToast("Пользовательские привязки сброшены");
   });

@@ -1652,7 +1652,7 @@ function parseSubscriptionText(raw) {
   return { subInfo: subInfo || "Подписка активна", servers };
 }
 
-if (typeof module !== "undefined" && module.exports) {
+// Global declarations
 const GEMINI_DOMAINS = [
   "gemini.google.com",
   "aistudio.google.com",
@@ -1691,5 +1691,5 @@ function findUsServer(servers) {
   return usAny || null;
 }
 
-  module.exports = { DEFAULT_CONFIG, GEMINI_DOMAINS, findUsServer, cleanDomain, safeDecodeB64Utf8, safeEncodeB64Utf8, extractFlag, cleanServerName, parseSubscriptionText, parseClashYaml, parseSingboxJson };
+if (typeof module !== "undefined" && module.exports) { module.exports = { DEFAULT_CONFIG, GEMINI_DOMAINS, findUsServer, cleanDomain, safeDecodeB64Utf8, safeEncodeB64Utf8, extractFlag, cleanServerName, parseSubscriptionText, parseClashYaml, parseSingboxJson };
 }

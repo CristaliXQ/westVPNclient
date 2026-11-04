@@ -98,6 +98,46 @@ function generatePacScript(cfg) {
     lines.push("  }");
   }
 
+  // Custom per-domain server routing (evaluated first so specific domains take precedence over general bypasses)
+  var dRoutes = cfg.domainRoutes || {};
+  var usPort = cfg.usProxyPort || 10820;
+  var usHttpPort = cfg.usHttpPort || 10821;
+  var usDirective = "SOCKS5 127.0.0.1:" + usPort + "; SOCKS 127.0.0.1:" + usPort + "; PROXY 127.0.0.1:" + usHttpPort + "; " + proxyDirective;
+  var routeEntries = [];
+  var seenDoms = new Set();
+
+  for (var domKey in dRoutes) {
+    if (!Object.prototype.hasOwnProperty.call(dRoutes, domKey)) continue;
+    var sid = dRoutes[domKey];
+    var cDom = cleanDomainForPac(domKey);
+    if (!cDom || seenDoms.has(cDom)) continue;
+    seenDoms.add(cDom);
+
+    var targetDirective;
+    if (sid === "direct") {
+      targetDirective = "DIRECT";
+    } else {
+      var isUs = (sid === cfg.geminiServerId) ||
+        (cfg.servers || []).some(function(s) {
+          return s.id === sid && (s.flag === "🇺🇸" || (s.name && (s.name.indexOf("USA") !== -1 || s.name.indexOf("US ") !== -1)));
+        });
+      targetDirective = isUs ? usDirective : proxyDirective;
+    }
+    routeEntries.push([cDom, targetDirective]);
+  }
+
+  // Sort by domain length descending: subdomains (e.g. gemini.google.com) evaluate before parents (google.com)
+  routeEntries.sort(function(a, b) {
+    return b[0].length - a[0].length;
+  });
+
+  if (routeEntries.length > 0) {
+    lines.push("  var dRoutes = " + JSON.stringify(routeEntries) + ";");
+    lines.push("  for (var d = 0; d < dRoutes.length; d++) {");
+    lines.push("    if (matchHost(host, dRoutes[d][0])) return dRoutes[d][1];");
+    lines.push("  }");
+  }
+
   // YouTube Zapret bypass vs VPN routing
   lines.push("  var yt = " + JSON.stringify(ytDomains) + ";");
   lines.push("  for (var i = 0; i < yt.length; i++) {");
@@ -113,46 +153,6 @@ function generatePacScript(cfg) {
     lines.push("  var bp = " + JSON.stringify(cleanBp) + ";");
     lines.push("  for (var j = 0; j < bp.length; j++) {");
     lines.push("    if (matchHost(host, bp[j])) return 'DIRECT';");
-    lines.push("  }");
-  }
-
-  // Custom per-domain server routing (e.g. Gemini Task Mode -> US Server)
-  var dRoutes = cfg.domainRoutes || {};
-  var usPort = cfg.usProxyPort || 10820;
-  var usDirective = "SOCKS5 127.0.0.1:" + usPort + "; SOCKS 127.0.0.1:" + usPort + "; " + proxyDirective;
-  var usDomains = [];
-  var customProxyDomains = [];
-
-  for (var domKey in dRoutes) {
-    if (!Object.prototype.hasOwnProperty.call(dRoutes, domKey)) continue;
-    var sid = dRoutes[domKey];
-    var cDom = cleanDomainForPac(domKey);
-    if (!cDom) continue;
-    if (sid === "direct") {
-      continue;
-    }
-    var isUs = (sid === cfg.geminiServerId) ||
-      (cfg.servers || []).some(function(s) {
-        return s.id === sid && (s.flag === "🇺🇸" || (s.name && (s.name.indexOf("USA") !== -1 || s.name.indexOf("US ") !== -1)));
-      });
-    if (isUs) {
-      usDomains.push(cDom);
-    } else {
-      customProxyDomains.push(cDom);
-    }
-  }
-
-  if (usDomains.length > 0) {
-    lines.push("  var usDoms = " + JSON.stringify(Array.from(new Set(usDomains))) + ";");
-    lines.push("  for (var u = 0; u < usDoms.length; u++) {");
-    lines.push("    if (matchHost(host, usDoms[u])) return '" + usDirective + "';");
-    lines.push("  }");
-  }
-
-  if (customProxyDomains.length > 0) {
-    lines.push("  var custDoms = " + JSON.stringify(Array.from(new Set(customProxyDomains))) + ";");
-    lines.push("  for (var c = 0; c < custDoms.length; c++) {");
-    lines.push("    if (matchHost(host, custDoms[c])) return '" + proxyDirective + "';");
     lines.push("  }");
   }
 
@@ -262,6 +262,9 @@ async function applyProxySettings() {
         if (chrome.runtime.lastError) console.warn("Chrome proxy set pac warning:", chrome.runtime.lastError.message);
         updateBadge(cfg);
       });
+      if (cfg.domainRoutes) {
+        syncDomainRoutesToBackend(cfg.domainRoutes);
+      }
     }
   } catch (err) {
     console.error("Failed to apply proxy settings:", err);
@@ -358,6 +361,17 @@ async function checkServiceHealthAndSync() {
 }
 
 setInterval(checkServiceHealthAndSync, 10000);
+
+if (typeof chrome !== "undefined" && chrome.alarms) {
+  try {
+    chrome.alarms.create("west_service_sync", { periodInMinutes: 0.25 });
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === "west_service_sync") {
+        checkServiceHealthAndSync();
+      }
+    });
+  } catch(e) {}
+}
 
 chrome.runtime.onInstalled.addListener(async () => {
   const existing = await chrome.storage.local.get("config");

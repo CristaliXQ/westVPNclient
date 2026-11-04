@@ -140,6 +140,29 @@ check("General proxy site remains on 10818", evalGemini("https://chatgpt.com", "
 check("LAN remains DIRECT during domain routing", evalGemini("http://127.0.0.1:3000", "127.0.0.1"), "DIRECT");
 check("YouTube Zapret remains DIRECT during domain routing", evalGemini("https://youtube.com", "youtube.com"), "DIRECT");
 
+// 6. SUBDOMAIN SPECIFICITY & BYPASS PRECEDENCE
+console.log("\n6. Testing Subdomain Specificity & Precedence:");
+const pacPrecedence = generatePacScript({
+  ...DEFAULT_CONFIG,
+  mode: 'all',
+  bypassDomains: ["google.com", "example.com"],
+  domainRoutes: {
+    "gemini.google.com": "srv_27",
+    "tasks.google.com": "srv_27",
+    "sub.example.com": "srv_7",
+    "direct-in-all.org": "direct"
+  }
+});
+const evalPrecedence = createPacEnvironment(pacPrecedence);
+check("Gemini US overrides parent google.com in bypass", evalPrecedence("https://gemini.google.com", "gemini.google.com"), "SOCKS5 127.0.0.1:10820");
+check("Tasks US overrides parent google.com in bypass", evalPrecedence("https://tasks.google.com", "tasks.google.com"), "SOCKS5 127.0.0.1:10820");
+check("Parent google.com goes DIRECT via bypass in ALL mode", evalPrecedence("https://google.com", "google.com"), "DIRECT");
+check("Other google subdomain (mail.google.com) goes DIRECT via bypass", evalPrecedence("https://mail.google.com", "mail.google.com"), "DIRECT");
+check("Specific sub.example.com routes to VPN despite example.com in bypass", evalPrecedence("https://sub.example.com", "sub.example.com"), "SOCKS5 127.0.0.1:10818");
+check("Parent example.com goes DIRECT via bypass", evalPrecedence("https://example.com", "example.com"), "DIRECT");
+check("Explicit direct domain route in ALL mode returns DIRECT", evalPrecedence("https://direct-in-all.org", "direct-in-all.org"), "DIRECT");
+check("Unrouted domain in ALL mode returns PROXY", evalPrecedence("https://wikipedia.org", "wikipedia.org"), "SOCKS5 127.0.0.1:10818");
+
 console.log(`\n========================================`);
 console.log(`TOTAL TESTS: ${total} | PASSED: ${passed} | FAILED: ${total - passed}`);
 if (passed === total) {

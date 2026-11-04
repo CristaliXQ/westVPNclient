@@ -29,26 +29,26 @@
       </div>
     </header>
 
-    <!-- Current Site Bar with Multi-Server Dropdown -->
+    <!-- Current Site Bar: Clean, Obvious & Dark -->
     <div class="current-site-bar">
-      <div class="site-info-box">
-        <div class="site-main-line">
+      <div class="site-row-top">
+        <div class="site-identity">
+          <span class="site-pulse-dot"></span>
           <span class="site-label">Сайт:</span>
           <span class="site-domain" id="currentDomain" title="Текущая вкладка">Загрузка...</span>
-          <span class="site-status" id="currentSiteStatus">Direct</span>
         </div>
-        <div class="site-action-line" id="siteActionLine">
-          <label class="site-select-label" for="currentSiteServerSelect">Сервер:</label>
-          <select id="currentSiteServerSelect" class="site-server-dropdown" title="Выберите сервер специально для этого сайта">
-            <option value="default">🌐 Основной VPN (по умолч.)</option>
-            <option value="direct">⚡ Direct (без VPN)</option>
-            <!-- Dynamically populated with all servers -->
-          </select>
+        <div class="site-badges-group">
+          <span class="site-status" id="currentSiteStatus">Direct</span>
+          <button class="btn btn-xs btn-outline" id="currentSiteBtn">В VPN</button>
+          <button class="btn btn-xs btn-accent" id="geminiSiteQuickBtn" style="display:none;" title="Привязать этот домен к серверу США">🇺🇸 В США</button>
         </div>
       </div>
-      <div class="site-quick-actions">
-        <button class="btn btn-xs btn-accent" id="geminiSiteQuickBtn" style="display:none;" title="Привязать этот домен к серверу США">🇺🇸 Режим США</button>
-        <button class="btn btn-xs btn-outline" id="currentSiteBtn">В VPN</button>
+      <div class="site-row-bottom" id="siteActionLine">
+        <label class="site-picker-label" for="currentSiteServerSelect">Сервер для сайта:</label>
+        <select id="currentSiteServerSelect" class="site-server-dropdown" title="Выберите любой сервер подписки специально для этого сайта">
+          <option value="default">🌐 Основной VPN (по умолч.)</option>
+          <option value="direct">⚡ Direct (без VPN)</option>
+        </select>
       </div>
     </div>
 
@@ -83,7 +83,7 @@
       <div class="active-server-info">
         <span class="active-server-flag" id="activeServerFlag">🌐</span>
         <div class="active-server-text-wrap">
-          <span class="active-server-caption">Основной VPN:</span>
+          <span class="active-server-caption">Основной VPN (для остальных сайтов):</span>
           <span class="active-server-value" id="activeServerHeader">Загрузка...</span>
         </div>
       </div>
