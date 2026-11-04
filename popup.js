@@ -1,6 +1,6 @@
 let appConfig = null;
 let currentTabDomain = "";
-let currentDomainSubTab = "proxy";
+let currentDomainSubTab = "dedicated";
 let serverPings = {};
 
 function showToast(message) {
@@ -17,6 +17,14 @@ async function saveConfig() {
   await chrome.storage.local.set({ config: appConfig });
   chrome.runtime.sendMessage({ type: "APPLY_PROXY" }, () => {
     if (chrome.runtime.lastError) {}
+  });
+}
+
+function getUsServers(servers) {
+  const list = servers || [];
+  return list.filter(s => {
+    const n = (s.name || "").toLowerCase();
+    return s.flag === "🇺🇸" || n.includes("usa") || n.includes("us ") || n.includes("united states");
   });
 }
 
@@ -52,16 +60,20 @@ function updateBadgeAndUI() {
   }
 
   const coreMode = appConfig.coreMode || "auto";
-  let coreLabel = `${appConfig.proxyHost || "127.0.0.1"}:${appConfig.proxyPort || 10818} • SOCKS5`;
+  let coreLabel = `${appConfig.proxyPort || 10818} (Main) • ${appConfig.usProxyPort || 10820} (US)`;
   if (coreMode === "external") {
     coreLabel = "127.0.0.1:10808 • v2RayTun";
-  } else if (coreMode === "auto") {
-    coreLabel = `${appConfig.proxyPort || 10818} -> 10808 (Авто)`;
+  } else if (coreMode === "west") {
+    coreLabel = `${appConfig.proxyPort || 10818} (Main) • ${appConfig.usProxyPort || 10820} (US)`;
   }
   if (coreStatusText) coreStatusText.textContent = coreLabel;
 
   const serversBadge = document.getElementById("serversCountBadge");
   if (serversBadge) serversBadge.textContent = (appConfig.servers || []).length;
+
+  const customCount = Object.keys(appConfig.domainRoutes || {}).length;
+  const customCountBadge = document.getElementById("domainRulesCountBadge");
+  if (customCountBadge) customCountBadge.textContent = customCount;
 
   const activeSrv = (appConfig.servers || []).find(s => s.id === appConfig.activeServerId) || appConfig.activeServer || (appConfig.servers || [])[0];
   if (activeHeader && activeSrv) {
@@ -79,18 +91,23 @@ function updateCurrentSiteBar() {
   const domainEl = document.getElementById("currentDomain");
   const statusEl = document.getElementById("currentSiteStatus");
   const btnEl = document.getElementById("currentSiteBtn");
+  const siteSelect = document.getElementById("currentSiteServerSelect");
+  const geminiBtn = document.getElementById("geminiSiteQuickBtn");
   if (!domainEl || !statusEl || !btnEl) return;
 
   if (!currentTabDomain) {
-    domainEl.textContent = "Служебная страница";
+    domainEl.textContent = "Служебная вкладка";
     statusEl.textContent = "Direct";
-    statusEl.className = "site-status";
+    statusEl.className = "site-status direct";
     btnEl.style.display = "none";
+    if (geminiBtn) geminiBtn.style.display = "none";
+    if (siteSelect) siteSelect.disabled = true;
     return;
   }
 
   domainEl.textContent = currentTabDomain;
   btnEl.style.display = "inline-flex";
+  if (siteSelect) siteSelect.disabled = false;
 
   const isLan = currentTabDomain === "localhost" ||
     currentTabDomain === "127.0.0.1" ||
@@ -100,8 +117,37 @@ function updateCurrentSiteBar() {
     currentTabDomain.startsWith("10.");
   if (isLan) {
     statusEl.textContent = "LAN (Direct)";
-    statusEl.className = "site-status";
+    statusEl.className = "site-status direct";
     btnEl.style.display = "none";
+    if (geminiBtn) geminiBtn.style.display = "none";
+    return;
+  }
+
+  // Populate site dropdown if needed
+  populateSiteServerDropdown();
+
+  const isGeminiSite = currentTabDomain.includes("gemini") || currentTabDomain.includes("aistudio") || currentTabDomain.includes("makersuite") || currentTabDomain.includes("bard.google");
+  const assignedServerId = (appConfig.domainRoutes || {})[currentTabDomain];
+
+  if (assignedServerId) {
+    if (assignedServerId === "direct") {
+      statusEl.textContent = "Direct";
+      statusEl.className = "site-status direct";
+      btnEl.textContent = "В VPN";
+    } else {
+      const srvObj = (appConfig.servers || []).find(s => s.id === assignedServerId);
+      const isUs = srvObj && (srvObj.flag === "🇺🇸" || (srvObj.name && srvObj.name.includes("USA")));
+      if (isUs) {
+        statusEl.textContent = "🇺🇸 США (Gemini Tasks)";
+        statusEl.className = "site-status gemini-us";
+      } else {
+        statusEl.textContent = `VPN: ${srvObj ? cleanServerName(srvObj.name).slice(0, 16) : 'Выделенный'}`;
+        statusEl.className = "site-status proxy";
+      }
+      btnEl.textContent = "В Direct";
+    }
+    if (siteSelect) siteSelect.value = assignedServerId;
+    if (geminiBtn) geminiBtn.style.display = "none";
     return;
   }
 
@@ -112,35 +158,16 @@ function updateCurrentSiteBar() {
   if (isYt) {
     if (appConfig.youtubeDirect !== false) {
       statusEl.textContent = "Zapret (Direct)";
-      statusEl.className = "site-status";
-      statusEl.style.color = "#00bcd4";
-      statusEl.style.borderColor = "#00bcd4";
+      statusEl.className = "site-status direct";
       btnEl.textContent = "В VPN";
-      btnEl.onclick = async () => {
-        appConfig.youtubeDirect = false;
-        if (!appConfig.proxyDomains.includes(currentTabDomain)) {
-          appConfig.proxyDomains.push(currentTabDomain);
-        }
-        appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(
-          d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
-        );
-        await saveConfig();
-        renderAll();
-        showToast("YouTube переключен в VPN");
-      };
+      if (siteSelect) siteSelect.value = "direct";
     } else {
       statusEl.textContent = "В VPN";
       statusEl.className = "site-status proxy";
-      statusEl.style.color = "";
-      statusEl.style.borderColor = "";
       btnEl.textContent = "В Direct";
-      btnEl.onclick = async () => {
-        appConfig.youtubeDirect = true;
-        await saveConfig();
-        renderAll();
-        showToast("YouTube переключен на Zapret (Direct)");
-      };
+      if (siteSelect) siteSelect.value = "default";
     }
+    if (geminiBtn) geminiBtn.style.display = "none";
     return;
   }
 
@@ -154,62 +181,97 @@ function updateCurrentSiteBar() {
   if (inProxy) {
     statusEl.textContent = "В VPN";
     statusEl.className = "site-status proxy";
-    statusEl.style.color = "";
-    statusEl.style.borderColor = "";
     btnEl.textContent = "В Direct";
-    btnEl.onclick = async () => {
-      appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(
-        d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
-      );
-      if (!appConfig.bypassDomains.includes(currentTabDomain)) {
-        appConfig.bypassDomains.push(currentTabDomain);
-      }
-      await saveConfig();
-      renderAll();
-      showToast(`${currentTabDomain} исключен в Direct`);
-    };
+    if (siteSelect) siteSelect.value = "default";
   } else if (inBypass) {
     statusEl.textContent = "В Direct";
-    statusEl.className = "site-status";
-    statusEl.style.color = "";
-    statusEl.style.borderColor = "";
+    statusEl.className = "site-status direct";
     btnEl.textContent = "В VPN";
-    btnEl.onclick = async () => {
-      appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(
-        d => d !== currentTabDomain && !currentTabDomain.endsWith("." + d)
-      );
-      if (!appConfig.proxyDomains.includes(currentTabDomain)) {
-        appConfig.proxyDomains.push(currentTabDomain);
-      }
-      await saveConfig();
-      renderAll();
-      showToast(`${currentTabDomain} переключен в VPN`);
-    };
+    if (siteSelect) siteSelect.value = "direct";
   } else {
     if (appConfig.mode === "all") {
       statusEl.textContent = "В VPN (Все)";
       statusEl.className = "site-status proxy";
       btnEl.textContent = "В Direct";
-      btnEl.onclick = async () => {
-        if (!appConfig.bypassDomains.includes(currentTabDomain)) {
-          appConfig.bypassDomains.push(currentTabDomain);
-        }
-        await saveConfig();
-        renderAll();
-        showToast(`${currentTabDomain} добавлен в исключения`);
-      };
+      if (siteSelect) siteSelect.value = "default";
     } else {
-      statusEl.textContent = "Direct (По умолчанию)";
-      statusEl.className = "site-status";
+      statusEl.textContent = "Direct (По умолч.)";
+      statusEl.className = "site-status direct";
       btnEl.textContent = "В VPN";
-      btnEl.onclick = async () => {
-        if (!appConfig.proxyDomains.includes(currentTabDomain)) {
-          appConfig.proxyDomains.push(currentTabDomain);
-        }
-        await saveConfig();
-        renderAll();
-        showToast(`${currentTabDomain} добавлен в VPN`);
-      };
+      if (siteSelect) siteSelect.value = "direct";
+    }
+  }
+
+  if (geminiBtn) {
+    geminiBtn.style.display = isGeminiSite ? "inline-flex" : "none";
+  }
+}
+
+function populateSiteServerDropdown() {
+  const siteSelect = document.getElementById("currentSiteServerSelect");
+  if (!siteSelect || siteSelect.options.length > 2) return;
+
+  const servers = appConfig.servers || [];
+  const usServers = getUsServers(servers);
+  const otherServers = servers.filter(s => !usServers.includes(s));
+
+  if (usServers.length > 0) {
+    const usGroup = document.createElement("optgroup");
+    usGroup.label = "🇺🇸 США (для задач Gemini)";
+    usServers.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.flag || '🇺🇸'} ${cleanServerName(s.name)}`;
+      usGroup.appendChild(opt);
+    });
+    siteSelect.appendChild(usGroup);
+  }
+
+  if (otherServers.length > 0) {
+    const allGroup = document.createElement("optgroup");
+    allGroup.label = "🌍 Все серверы подписки";
+    otherServers.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.flag || '🌐'} ${cleanServerName(s.name)}`;
+      allGroup.appendChild(opt);
+    });
+    siteSelect.appendChild(allGroup);
+  }
+}
+
+function updateGeminiCard() {
+  const geminiToggle = document.getElementById("geminiToggle");
+  const geminiSelect = document.getElementById("geminiServerSelect");
+  const geminiPortTag = document.getElementById("geminiPortTag");
+  const settingsGemini = document.getElementById("settingsGeminiToggle");
+
+  if (geminiToggle) geminiToggle.checked = !!appConfig.geminiUsRouting;
+  if (settingsGemini) settingsGemini.checked = !!appConfig.geminiUsRouting;
+  if (geminiPortTag) geminiPortTag.textContent = `Порт: ${appConfig.usProxyPort || 10820}`;
+
+  if (geminiSelect) {
+    const servers = appConfig.servers || [];
+    const usServers = getUsServers(servers);
+    geminiSelect.innerHTML = "";
+
+    if (usServers.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = appConfig.activeServerId || "srv_27";
+      opt.textContent = "🇺🇸 Авто-поиск США (srv_27)";
+      geminiSelect.appendChild(opt);
+    } else {
+      usServers.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = `${s.flag || '🇺🇸'} ${cleanServerName(s.name)}`;
+        if (s.id === appConfig.geminiServerId) opt.selected = true;
+        geminiSelect.appendChild(opt);
+      });
+    }
+
+    if (appConfig.geminiServerId) {
+      geminiSelect.value = appConfig.geminiServerId;
     }
   }
 }
@@ -259,7 +321,8 @@ function renderServersList() {
   filtered.forEach(server => {
     const card = document.createElement("div");
     const isActive = server.id === appConfig.activeServerId || (appConfig.activeServer && appConfig.activeServer.id === server.id);
-    card.className = "server-card" + (isActive ? " active" : "");
+    const isGeminiUs = server.id === appConfig.geminiServerId;
+    card.className = "server-card" + (isActive ? " active" : "") + (isGeminiUs ? " gemini-active" : "");
 
     const proto = (server.proto || "vless").toLowerCase();
     const cleanName = cleanServerName(server.name);
@@ -279,13 +342,18 @@ function renderServersList() {
       }
     }
 
+    const isUs = server.flag === "🇺🇸" || (server.name && (server.name.includes("USA") || server.name.includes("US ")));
+
     card.innerHTML = `
       <div class="server-header">
         <div class="server-title-box">
           <span class="server-flag">${flag}</span>
           <span class="server-title" title="${server.name}">${cleanName || 'Server'}</span>
         </div>
-        <span class="proto-badge">${proto}</span>
+        <div style="display:flex; gap:4px; align-items:center;">
+          ${isGeminiUs ? '<span class="version-pill" style="border-color:#06b6d4; color:#38bdf8;">Gemini US</span>' : ''}
+          <span class="proto-badge">${proto}</span>
+        </div>
       </div>
       <div class="server-details">
         <span>${server.host}:${server.port}</span>
@@ -293,9 +361,10 @@ function renderServersList() {
       </div>
       <div class="server-bottom-row">
         <div>${pingHtml}</div>
-        <div style="display:flex; gap:6px;">
+        <div style="display:flex; gap:5px;">
+          ${isUs ? `<button class="btn btn-xs btn-outline btn-set-gemini" title="Назначить этот сервер для Gemini Task Mode">🤖 Для Gemini</button>` : ''}
           ${isActive ? '<button class="btn btn-xs btn-accent btn-select" disabled>✔ Активен</button>' : '<button class="btn btn-xs btn-primary btn-select">Подключить</button>'}
-          <button class="btn btn-xs btn-outline btn-copy" title="Копировать ключ">📋</button>
+          <button class="btn btn-xs btn-outline btn-copy" title="Копировать конфигурацию">📋</button>
         </div>
       </div>
     `;
@@ -308,6 +377,25 @@ function renderServersList() {
     card.onclick = selectAction;
     const btnSelect = card.querySelector(".btn-select");
     if (btnSelect) btnSelect.onclick = selectAction;
+
+    const btnGemini = card.querySelector(".btn-set-gemini");
+    if (btnGemini) {
+      btnGemini.onclick = async (e) => {
+        e.stopPropagation();
+        appConfig.geminiServerId = server.id;
+        appConfig.geminiUsRouting = true;
+        chrome.runtime.sendMessage({
+          type: "TOGGLE_GEMINI_US",
+          enabled: true,
+          serverId: server.id
+        }, async () => {
+          const data = await chrome.storage.local.get("config");
+          appConfig = data.config || appConfig;
+          renderAll();
+          showToast(`Сервер Gemini: ${cleanName}`);
+        });
+      };
+    }
 
     card.querySelector(".btn-copy").onclick = async (e) => {
       e.stopPropagation();
@@ -323,68 +411,170 @@ function renderServersList() {
   });
 }
 
-function renderDomainList() {
-  const container = document.getElementById("domainListContainer");
+function renderDedicatedRoutesList() {
+  const container = document.getElementById("dedicatedListContainer");
   if (!container) return;
-  const search = (document.getElementById("domainSearchInput")?.value || "").trim().toLowerCase();
-  const isProxy = currentDomainSubTab === "proxy";
+  const search = (document.getElementById("dedicatedSearchInput")?.value || "").trim().toLowerCase();
+  const routes = appConfig.domainRoutes || {};
+  const entries = Object.entries(routes);
+
+  const customBadge = document.getElementById("customServerCount");
+  if (customBadge) customBadge.textContent = entries.length;
+
+  const filtered = search ? entries.filter(([d]) => d.toLowerCase().includes(search)) : entries;
+
+  container.innerHTML = "";
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:18px; color:#64748b;">${search ? "Привязок не найдено" : "Нет выделенных привязок сайтов"}</div>`;
+    return;
+  }
+
+  const servers = appConfig.servers || [];
+
+  filtered.forEach(([domain, serverId]) => {
+    const card = document.createElement("div");
+    card.className = "domain-card";
+
+    let targetLabel = serverId;
+    let isUs = false;
+    if (serverId === "direct") {
+      targetLabel = "⚡ Direct";
+    } else {
+      const srv = servers.find(s => s.id === serverId);
+      if (srv) {
+        const flag = srv.flag || "🌐";
+        isUs = flag === "🇺🇸" || (srv.name && srv.name.includes("USA"));
+        targetLabel = `${flag} ${cleanServerName(srv.name).slice(0, 20)}`;
+      }
+    }
+
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
+        <span class="domain-name" title="${domain}">${domain}</span>
+        <span class="domain-route-tag ${isUs ? 'us-tag' : ''}">${targetLabel}</span>
+      </div>
+      <button class="btn-del-domain" title="Удалить привязку">×</button>
+    `;
+
+    card.querySelector(".btn-del-domain").onclick = () => {
+      chrome.runtime.sendMessage({ type: "REMOVE_DOMAIN_ROUTE", domain: domain }, async () => {
+        delete appConfig.domainRoutes[domain];
+        await chrome.storage.local.set({ config: appConfig });
+        renderAll();
+        showToast(`Привязка для ${domain} удалена`);
+      });
+    };
+
+    container.appendChild(card);
+  });
+
+  // Populate new dedicated server select
+  const select = document.getElementById("newDedicatedServerSelect");
+  if (select && select.options.length <= 1) {
+    select.innerHTML = "";
+    const usGroup = document.createElement("optgroup");
+    usGroup.label = "🇺🇸 США (Gemini Tasks)";
+    getUsServers(servers).forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.flag || '🇺🇸'} ${cleanServerName(s.name)}`;
+      usGroup.appendChild(opt);
+    });
+    select.appendChild(usGroup);
+
+    const allGroup = document.createElement("optgroup");
+    allGroup.label = "🌍 Все серверы";
+    servers.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `${s.flag || '🌐'} ${cleanServerName(s.name)}`;
+      allGroup.appendChild(opt);
+    });
+    select.appendChild(allGroup);
+  }
+}
+
+function renderDomainList() {
+  renderDedicatedRoutesList();
+
+  const proxyContainer = document.getElementById("domainListContainer");
+  const bypassContainer = document.getElementById("bypassListContainer");
 
   const pCount = document.getElementById("proxyCount");
   const bCount = document.getElementById("bypassCount");
   if (pCount) pCount.textContent = (appConfig.proxyDomains || []).length;
   if (bCount) bCount.textContent = (appConfig.bypassDomains || []).length;
-  
-  document.getElementById("subTabProxy")?.classList.toggle("active", isProxy);
-  document.getElementById("subTabBypass")?.classList.toggle("active", !isProxy);
 
-  const list = isProxy ? (appConfig.proxyDomains || []) : (appConfig.bypassDomains || []);
-  const filtered = search ? list.filter(d => d.includes(search)) : list;
-
-  container.innerHTML = "";
-  if (filtered.length === 0) {
-    container.innerHTML = `<div style="text-align:center; padding:20px; color:#666;">${search ? "Ничего не найдено" : "Список пуст"}</div>`;
-    return;
+  if (proxyContainer) {
+    const search = (document.getElementById("domainSearchInput")?.value || "").trim().toLowerCase();
+    const list = appConfig.proxyDomains || [];
+    const filtered = search ? list.filter(d => d.includes(search)) : list;
+    proxyContainer.innerHTML = "";
+    if (filtered.length === 0) {
+      proxyContainer.innerHTML = `<div style="text-align:center; padding:15px; color:#64748b;">${search ? "Ничего не найдено" : "Список пуст"}</div>`;
+    } else {
+      filtered.forEach(domain => {
+        const row = document.createElement("div");
+        row.className = "domain-card";
+        row.innerHTML = `
+          <span class="domain-name">${domain}</span>
+          <button class="btn-del-domain" title="Удалить">×</button>
+        `;
+        row.querySelector(".btn-del-domain").onclick = async () => {
+          appConfig.proxyDomains = appConfig.proxyDomains.filter(d => d !== domain);
+          await saveConfig();
+          renderAll();
+          showToast(`Удален: ${domain}`);
+        };
+        proxyContainer.appendChild(row);
+      });
+    }
   }
 
-  filtered.forEach(domain => {
-    const row = document.createElement("div");
-    row.className = "domain-item";
-    row.innerHTML = `
-      <span class="domain-text">${domain}</span>
-      <button class="btn-remove" title="Удалить">×</button>
-    `;
-
-    row.querySelector(".btn-remove").onclick = async () => {
-      if (isProxy) {
-        appConfig.proxyDomains = appConfig.proxyDomains.filter(d => d !== domain);
-      } else {
-        appConfig.bypassDomains = appConfig.bypassDomains.filter(d => d !== domain);
-      }
-      await saveConfig();
-      renderAll();
-      showToast(`Домен удален`);
-    };
-
-    container.appendChild(row);
-  });
+  if (bypassContainer) {
+    const search = (document.getElementById("bypassSearchInput")?.value || "").trim().toLowerCase();
+    const list = appConfig.bypassDomains || [];
+    const filtered = search ? list.filter(d => d.includes(search)) : list;
+    bypassContainer.innerHTML = "";
+    if (filtered.length === 0) {
+      bypassContainer.innerHTML = `<div style="text-align:center; padding:15px; color:#64748b;">${search ? "Ничего не найдено" : "Список пуст"}</div>`;
+    } else {
+      filtered.forEach(domain => {
+        const row = document.createElement("div");
+        row.className = "domain-card";
+        row.innerHTML = `
+          <span class="domain-name">${domain}</span>
+          <button class="btn-del-domain" title="Удалить">×</button>
+        `;
+        row.querySelector(".btn-del-domain").onclick = async () => {
+          appConfig.bypassDomains = appConfig.bypassDomains.filter(d => d !== domain);
+          await saveConfig();
+          renderAll();
+          showToast(`Удален: ${domain}`);
+        };
+        bypassContainer.appendChild(row);
+      });
+    }
+  }
 }
 
 function renderDiagnostics(data) {
   const srvCard = document.getElementById("diagServiceStatus");
   const xrayCard = document.getElementById("diagXrayStatus");
+  const usTunnelCard = document.getElementById("diagUsTunnelStatus");
   const extCard = document.getElementById("diagExternalStatus");
-  const serverCard = document.getElementById("diagServerStatus");
   const recsBox = document.getElementById("diagRecsBox");
   const logsBox = document.getElementById("diagLogsBox");
 
   if (!data) {
-    if (srvCard) { srvCard.textContent = "Не отвечает"; srvCard.className = "diag-card-status bad"; }
-    if (xrayCard) { xrayCard.textContent = "Остановлен"; xrayCard.className = "diag-card-status bad"; }
+    if (srvCard) { srvCard.textContent = "Не отвечает"; srvCard.className = "diag-card-status err"; }
+    if (xrayCard) { xrayCard.textContent = "Остановлен"; xrayCard.className = "diag-card-status err"; }
+    if (usTunnelCard) { usTunnelCard.textContent = "Остановлен"; usTunnelCard.className = "diag-card-status err"; }
     if (recsBox) {
       recsBox.innerHTML = `
-        <div style="color:#ef4444; font-weight:600; margin-bottom:4px;">Служба ядра West Service не запущена!</div>
-        <div>1. Запустите файл <code>start_service.vbs</code> или <code>start_service.bat</code> в папке проекта.</div>
-        <div>2. Если запущен v2RayTun, расширение автоматически переключится на его порт 10808.</div>
+        <div style="color:#f87171; font-weight:700; margin-bottom:4px;">Служба ядра West Service не запущена!</div>
+        <div>1. Запустите файл <code>start_service.vbs</code> или <code>start_service.bat</code> в папке расширения.</div>
+        <div>2. Если запущен v2RayTun, расширение автоматически использует его как резерв на порту 10808.</div>
       `;
     }
     return;
@@ -397,12 +587,17 @@ function renderDiagnostics(data) {
 
   if (xrayCard) {
     if (data.xrayCore && data.xrayCore.running) {
-      xrayCard.textContent = `Активен (PID ${data.xrayCore.pid || "-"})`;
+      xrayCard.textContent = `Активен (10818 • PID ${data.xrayCore.pid || "-"})`;
       xrayCard.className = "diag-card-status ok";
     } else {
       xrayCard.textContent = "Остановлен";
-      xrayCard.className = "diag-card-status bad";
+      xrayCard.className = "diag-card-status err";
     }
+  }
+
+  if (usTunnelCard) {
+    usTunnelCard.textContent = `Активен (порт ${appConfig.usProxyPort || 10820})`;
+    usTunnelCard.className = "diag-card-status ok";
   }
 
   if (extCard) {
@@ -410,21 +605,8 @@ function renderDiagnostics(data) {
       extCard.textContent = `Обнаружен (порт ${data.externalCore.port})`;
       extCard.className = "diag-card-status ok";
     } else {
-      extCard.textContent = "Не обнаружен";
+      extCard.textContent = "Не запущен (резерв)";
       extCard.className = "diag-card-status warn";
-    }
-  }
-
-  if (serverCard) {
-    if (data.activeServer && data.activeServer.reachable) {
-      serverCard.textContent = `Доступен (${data.activeServer.ping} ms)`;
-      serverCard.className = "diag-card-status ok";
-    } else if (data.activeServer && data.activeServer.server) {
-      serverCard.textContent = "Таймаут (Не отвечает)";
-      serverCard.className = "diag-card-status bad";
-    } else {
-      serverCard.textContent = "Не выбран";
-      serverCard.className = "diag-card-status warn";
     }
   }
 
@@ -441,24 +623,29 @@ function renderSettings() {
   const yt = document.getElementById("ytShieldToggle");
   const lan = document.getElementById("lanShieldToggle");
   const hfb = document.getElementById("httpFallbackToggle");
+  const gem = document.getElementById("settingsGeminiToggle");
   const host = document.getElementById("proxyHostInput");
   const port = document.getElementById("proxyPortInput");
   const hport = document.getElementById("httpPortInput");
+  const usPort = document.getElementById("usProxyPortInput");
   const sub = document.getElementById("subUrlInput");
   const coreMode = document.getElementById("coreModeSelect");
 
   if (yt) yt.checked = appConfig.youtubeDirect !== false;
   if (lan) lan.checked = appConfig.localBypass !== false;
   if (hfb) hfb.checked = appConfig.httpFallback !== false;
+  if (gem) gem.checked = !!appConfig.geminiUsRouting;
   if (host) host.value = appConfig.proxyHost || "127.0.0.1";
   if (port) port.value = appConfig.proxyPort || 10818;
   if (hport) hport.value = appConfig.httpPort || 10819;
+  if (usPort) usPort.value = appConfig.usProxyPort || 10820;
   if (sub) sub.value = appConfig.subscriptionUrl || "";
   if (coreMode) coreMode.value = appConfig.coreMode || "auto";
 }
 
 function renderAll() {
   updateBadgeAndUI();
+  updateGeminiCard();
   updateCurrentSiteBar();
   renderDomainList();
   renderServersList();
@@ -494,90 +681,242 @@ function setupEventListeners() {
     };
   });
 
+  // Current Site Server Dropdown
+  document.getElementById("currentSiteServerSelect")?.addEventListener("change", async (e) => {
+    if (!currentTabDomain) return;
+    const val = e.target.value;
+    if (val === "default") {
+      delete appConfig.domainRoutes[currentTabDomain];
+      if (!appConfig.proxyDomains.includes(currentTabDomain)) appConfig.proxyDomains.push(currentTabDomain);
+      appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== currentTabDomain);
+      showToast(`${currentTabDomain}: Основной VPN`);
+    } else if (val === "direct") {
+      appConfig.domainRoutes[currentTabDomain] = "direct";
+      if (!appConfig.bypassDomains.includes(currentTabDomain)) appConfig.bypassDomains.push(currentTabDomain);
+      appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(d => d !== currentTabDomain);
+      showToast(`${currentTabDomain}: Direct`);
+    } else {
+      appConfig.domainRoutes[currentTabDomain] = val;
+      if (!appConfig.proxyDomains.includes(currentTabDomain)) appConfig.proxyDomains.push(currentTabDomain);
+      appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== currentTabDomain);
+      const srv = (appConfig.servers || []).find(s => s.id === val);
+      showToast(`${currentTabDomain} -> ${srv ? cleanServerName(srv.name) : val}`);
+    }
+    await saveConfig();
+    chrome.runtime.sendMessage({
+      type: "SET_DOMAIN_ROUTE",
+      domain: currentTabDomain,
+      serverId: val
+    });
+    renderAll();
+  });
+
+  // Quick Gemini button on current site
+  document.getElementById("geminiSiteQuickBtn")?.addEventListener("click", () => {
+    if (!currentTabDomain) return;
+    const usSrv = appConfig.geminiServerId || "srv_27";
+    chrome.runtime.sendMessage({
+      type: "SET_DOMAIN_ROUTE",
+      domain: currentTabDomain,
+      serverId: usSrv
+    }, async () => {
+      appConfig.domainRoutes[currentTabDomain] = usSrv;
+      await chrome.storage.local.set({ config: appConfig });
+      renderAll();
+      showToast(`${currentTabDomain} привязан к серверу США!`);
+    });
+  });
+
+  // Gemini Card Toggle
+  document.getElementById("geminiToggle")?.addEventListener("change", (e) => {
+    const isEnabled = e.target.checked;
+    chrome.runtime.sendMessage({
+      type: "TOGGLE_GEMINI_US",
+      enabled: isEnabled,
+      serverId: appConfig.geminiServerId
+    }, async (res) => {
+      appConfig.geminiUsRouting = isEnabled;
+      const data = await chrome.storage.local.get("config");
+      appConfig = data.config || appConfig;
+      renderAll();
+      showToast(isEnabled ? "Режим задач Gemini (США) включен" : "Режим Gemini отключен");
+    });
+  });
+
+  // Gemini Server Select
+  document.getElementById("geminiServerSelect")?.addEventListener("change", (e) => {
+    const newUsId = e.target.value;
+    appConfig.geminiServerId = newUsId;
+    if (appConfig.geminiUsRouting) {
+      chrome.runtime.sendMessage({
+        type: "TOGGLE_GEMINI_US",
+        enabled: true,
+        serverId: newUsId
+      }, async () => {
+        const data = await chrome.storage.local.get("config");
+        appConfig = data.config || appConfig;
+        renderAll();
+        showToast("Сервер США для Gemini обновлен");
+      });
+    } else {
+      saveConfig();
+    }
+  });
+
+  // Routing Subtabs
+  document.getElementById("subTabDedicated")?.addEventListener("click", () => {
+    switchRoutingSubtab("dedicated");
+  });
   document.getElementById("subTabProxy")?.addEventListener("click", () => {
-    currentDomainSubTab = "proxy";
-    renderDomainList();
+    switchRoutingSubtab("proxy");
   });
   document.getElementById("subTabBypass")?.addEventListener("click", () => {
-    currentDomainSubTab = "bypass";
-    renderDomainList();
+    switchRoutingSubtab("bypass");
   });
 
-  const addDomainAction = async () => {
-    const input = document.getElementById("newDomainInput");
+  function switchRoutingSubtab(sub) {
+    currentDomainSubTab = sub;
+    document.querySelectorAll(".route-subtab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".routing-subpane").forEach(p => p.classList.remove("active"));
+    if (sub === "dedicated") {
+      document.getElementById("subTabDedicated")?.classList.add("active");
+      document.getElementById("subpaneDedicated")?.classList.add("active");
+    } else if (sub === "proxy") {
+      document.getElementById("subTabProxy")?.classList.add("active");
+      document.getElementById("subpaneProxy")?.classList.add("active");
+    } else {
+      document.getElementById("subTabBypass")?.classList.add("active");
+      document.getElementById("subpaneBypass")?.classList.add("active");
+    }
+  }
+
+  // Apply Gemini Preset Button
+  document.getElementById("applyGeminiPresetBtn")?.addEventListener("click", () => {
+    chrome.runtime.sendMessage({
+      type: "TOGGLE_GEMINI_US",
+      enabled: true,
+      serverId: appConfig.geminiServerId || "srv_27"
+    }, async () => {
+      const data = await chrome.storage.local.get("config");
+      appConfig = data.config || appConfig;
+      renderAll();
+      showToast("⚡ Все 14 доменов Gemini привязаны к серверу США!");
+    });
+  });
+
+  // Add Dedicated Domain Route
+  document.getElementById("addDedicatedRouteBtn")?.addEventListener("click", () => {
+    const input = document.getElementById("newDedicatedDomainInput");
+    const serverSelect = document.getElementById("newDedicatedServerSelect");
     const rawVal = input?.value.trim();
     if (!rawVal) return;
-
     const domain = cleanDomain(rawVal);
     if (!domain) {
       showToast("Некорректный домен");
       return;
     }
-
-    const targetType = document.getElementById("domainTargetType")?.value;
-    if (targetType === "proxy") {
-      if (!appConfig.proxyDomains.includes(domain)) {
-        appConfig.proxyDomains.unshift(domain);
-      }
-      appConfig.bypassDomains = appConfig.bypassDomains.filter(d => d !== domain);
-      currentDomainSubTab = "proxy";
-      showToast(`Добавлен: ${domain}`);
-    } else {
-      if (!appConfig.bypassDomains.includes(domain)) {
-        appConfig.bypassDomains.unshift(domain);
-      }
-      appConfig.proxyDomains = appConfig.proxyDomains.filter(d => d !== domain);
-      currentDomainSubTab = "bypass";
-      showToast(`Добавлен: ${domain}`);
+    const serverId = serverSelect?.value;
+    if (!serverId) {
+      showToast("Выберите сервер");
+      return;
     }
 
-    if (input) input.value = "";
-    await saveConfig();
-    renderAll();
-  };
-
-  document.getElementById("addDomainBtn")?.addEventListener("click", addDomainAction);
-  document.getElementById("newDomainInput")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") addDomainAction();
+    chrome.runtime.sendMessage({
+      type: "SET_DOMAIN_ROUTE",
+      domain: domain,
+      serverId: serverId
+    }, async () => {
+      if (!appConfig.domainRoutes) appConfig.domainRoutes = {};
+      appConfig.domainRoutes[domain] = serverId;
+      if (!appConfig.proxyDomains.includes(domain)) appConfig.proxyDomains.push(domain);
+      input.value = "";
+      await chrome.storage.local.set({ config: appConfig });
+      renderAll();
+      showToast(`Сайт ${domain} привязан`);
+    });
   });
 
-  document.getElementById("domainSearchInput")?.addEventListener("input", () => renderDomainList());
+  document.getElementById("clearCustomRoutesBtn")?.addEventListener("click", async () => {
+    appConfig.domainRoutes = {};
+    await saveConfig();
+    chrome.runtime.sendMessage({ type: "APPLY_PROXY" });
+    renderAll();
+    showToast("Пользовательские привязки сброшены");
+  });
 
+  // Add General Proxy Domain
+  document.getElementById("addDomainBtn")?.addEventListener("click", async () => {
+    const input = document.getElementById("newDomainInput");
+    const rawVal = input?.value.trim();
+    if (!rawVal) return;
+    const domain = cleanDomain(rawVal);
+    if (!domain) {
+      showToast("Некорректный домен");
+      return;
+    }
+    if (!appConfig.proxyDomains.includes(domain)) {
+      appConfig.proxyDomains.unshift(domain);
+    }
+    appConfig.bypassDomains = (appConfig.bypassDomains || []).filter(d => d !== domain);
+    input.value = "";
+    await saveConfig();
+    renderAll();
+    showToast(`В VPN: ${domain}`);
+  });
+
+  // Add Bypass Domain
+  document.getElementById("addBypassDomainBtn")?.addEventListener("click", async () => {
+    const input = document.getElementById("newBypassDomainInput");
+    const rawVal = input?.value.trim();
+    if (!rawVal) return;
+    const domain = cleanDomain(rawVal);
+    if (!domain) {
+      showToast("Некорректный домен");
+      return;
+    }
+    if (!appConfig.bypassDomains.includes(domain)) {
+      appConfig.bypassDomains.unshift(domain);
+    }
+    appConfig.proxyDomains = (appConfig.proxyDomains || []).filter(d => d !== domain);
+    input.value = "";
+    await saveConfig();
+    renderAll();
+    showToast(`В Direct: ${domain}`);
+  });
+
+  // Search Inputs
+  document.getElementById("dedicatedSearchInput")?.addEventListener("input", () => renderDedicatedRoutesList());
+  document.getElementById("domainSearchInput")?.addEventListener("input", () => renderDomainList());
+  document.getElementById("bypassSearchInput")?.addEventListener("input", () => renderDomainList());
+
+  // Subscription Refresh
   const subUrlInput = document.getElementById("subUrlInput");
   if (subUrlInput) {
     subUrlInput.onchange = async (e) => {
       appConfig.subscriptionUrl = e.target.value.trim();
       await saveConfig();
     };
-    subUrlInput.onkeydown = (e) => {
-      if (e.key === "Enter") {
-        document.getElementById("refreshSubBtn")?.click();
-      }
-    };
   }
 
-  document.getElementById("refreshSubBtn")?.addEventListener("click", async () => {
+  document.getElementById("refreshSubBtn")?.addEventListener("click", () => {
     const subUrl = subUrlInput?.value.trim();
     if (!subUrl) {
       showToast("Введите ссылку на подписку");
       return;
     }
-
     const btn = document.getElementById("refreshSubBtn");
     if (btn) {
       btn.disabled = true;
       btn.textContent = "...";
     }
-
     chrome.runtime.sendMessage({ type: "FETCH_SUBSCRIPTION", url: subUrl }, async (res) => {
       if (btn) {
         btn.disabled = false;
         btn.textContent = "Обновить";
       }
-
       if (res && res.success) {
         const data = await chrome.storage.local.get("config");
-        appConfig = data.config;
+        appConfig = data.config || appConfig;
         renderAll();
         showToast(`Успешно! Серверов: ${res.count}`);
       } else {
@@ -593,9 +932,8 @@ function setupEventListeners() {
     const btn = document.getElementById("minPingBtn");
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "⚡ Тест...";
+      btn.textContent = "⚡...";
     }
-
     chrome.runtime.sendMessage({
       type: "PING_SERVERS",
       servers: appConfig.servers || []
@@ -604,11 +942,9 @@ function setupEventListeners() {
         btn.disabled = false;
         btn.textContent = "⚡ Мин. пинг";
       }
-
       if (res && res.success && res.results) {
         serverPings = res.results;
         renderServersList();
-
         if (res.minPingId) {
           const fastest = (appConfig.servers || []).find(s => s.id === res.minPingId);
           if (fastest) {
@@ -624,6 +960,18 @@ function setupEventListeners() {
     });
   });
 
+  // FIND US SERVER BUTTON
+  document.getElementById("findUsServerBtn")?.addEventListener("click", () => {
+    const usServers = getUsServers(appConfig.servers || []);
+    if (usServers.length === 0) {
+      showToast("Серверы США не найдены в подписке");
+      return;
+    }
+    const bestUs = usServers[0];
+    selectServer(bestUs);
+    showToast(`Выбран сервер США: ${cleanServerName(bestUs.name)}`);
+  });
+
   // PING ALL ACTION
   document.getElementById("pingAllBtn")?.addEventListener("click", () => {
     const btn = document.getElementById("pingAllBtn");
@@ -631,7 +979,6 @@ function setupEventListeners() {
       btn.disabled = true;
       btn.textContent = "...";
     }
-
     chrome.runtime.sendMessage({
       type: "PING_SERVERS",
       servers: appConfig.servers || []
@@ -640,7 +987,6 @@ function setupEventListeners() {
         btn.disabled = false;
         btn.textContent = "🔄 Пинг";
       }
-
       if (res && res.success && res.results) {
         serverPings = res.results;
         renderServersList();
@@ -658,18 +1004,12 @@ function setupEventListeners() {
       btn.disabled = true;
       btn.textContent = "...";
     }
-
     chrome.runtime.sendMessage({ type: "DIAGNOSE" }, (res) => {
       if (btn) {
         btn.disabled = false;
         btn.textContent = "Проверить";
       }
-
-      if (res && res.success && res.data) {
-        renderDiagnostics(res.data);
-      } else {
-        renderDiagnostics(null);
-      }
+      renderDiagnostics(res && res.success ? res.data : null);
     });
   });
 
@@ -692,14 +1032,18 @@ function setupEventListeners() {
     appConfig.httpFallback = e.target.checked;
     await saveConfig();
   });
+  document.getElementById("settingsGeminiToggle")?.addEventListener("change", async (e) => {
+    document.getElementById("geminiToggle")?.click();
+  });
 
   document.getElementById("saveCoreSettingsBtn")?.addEventListener("click", async () => {
     appConfig.proxyHost = document.getElementById("proxyHostInput")?.value.trim() || "127.0.0.1";
     appConfig.proxyPort = parseInt(document.getElementById("proxyPortInput")?.value, 10) || 10818;
     appConfig.httpPort = parseInt(document.getElementById("httpPortInput")?.value, 10) || 10819;
+    appConfig.usProxyPort = parseInt(document.getElementById("usProxyPortInput")?.value, 10) || 10820;
     await saveConfig();
     updateBadgeAndUI();
-    showToast("Настройки ядра сохранены");
+    showToast("Настройки портов сохранены");
   });
 }
 
@@ -714,6 +1058,9 @@ async function init() {
     appConfig.activeServer = appConfig.servers[0];
     appConfig.activeServerId = appConfig.servers[0]?.id;
   }
+  if (!appConfig.domainRoutes) {
+    appConfig.domainRoutes = { ...(DEFAULT_CONFIG.domainRoutes || {}) };
+  }
 
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -725,7 +1072,6 @@ async function init() {
   setupEventListeners();
   renderAll();
 
-  // Listen for auto-failover server changes from background watchdog
   chrome.runtime.onMessage.addListener((message) => {
     if (message && message.type === "SERVER_CHANGED" && message.server) {
       appConfig.activeServerId = message.server.id;
@@ -736,7 +1082,6 @@ async function init() {
     }
   });
 
-  // Check core service state (clean reconnecting indicator without unhandled errors)
   chrome.runtime.sendMessage({ type: "CHECK_CORE" }, (res) => {
     if (chrome.runtime.lastError) return;
     if (res) {
@@ -751,7 +1096,6 @@ async function init() {
     }
   });
 
-  // Fast background ping for active server
   if (appConfig.activeServer && appConfig.activeServer.host) {
     fetch("http://127.0.0.1:10850/ping_server", {
       method: "POST",

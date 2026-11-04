@@ -11,64 +11,110 @@
     <!-- Header -->
     <header class="app-header">
       <div class="logo-group">
+        <div class="logo-badge">W</div>
         <div>
-          <div class="app-title">West Client</div>
+          <div class="title-row">
+            <span class="app-title">West Client</span>
+            <span class="version-pill">v1.4.0</span>
+          </div>
           <div class="app-subtitle" id="coreStatusText">127.0.0.1:10818 • SOCKS5</div>
         </div>
       </div>
       <div class="header-actions">
         <span class="badge" id="modeBadge">PAC</span>
-        <label class="switch" title="Включить / Выключить">
+        <label class="switch" title="Включить / Выключить туннель">
           <input type="checkbox" id="masterToggle" checked>
           <span class="slider"></span>
         </label>
       </div>
     </header>
 
-    <!-- Current Site -->
+    <!-- Current Site Bar with Multi-Server Dropdown -->
     <div class="current-site-bar">
-      <div class="site-info">
-        <span class="site-label">Сайт:</span>
-        <span class="site-domain" id="currentDomain">Загрузка...</span>
-        <span class="site-status" id="currentSiteStatus">Direct</span>
+      <div class="site-info-box">
+        <div class="site-main-line">
+          <span class="site-label">Сайт:</span>
+          <span class="site-domain" id="currentDomain" title="Текущая вкладка">Загрузка...</span>
+          <span class="site-status" id="currentSiteStatus">Direct</span>
+        </div>
+        <div class="site-action-line" id="siteActionLine">
+          <label class="site-select-label" for="currentSiteServerSelect">Сервер:</label>
+          <select id="currentSiteServerSelect" class="site-server-dropdown" title="Выберите сервер специально для этого сайта">
+            <option value="default">🌐 Основной VPN (по умолч.)</option>
+            <option value="direct">⚡ Direct (без VPN)</option>
+            <!-- Dynamically populated with all servers -->
+          </select>
+        </div>
       </div>
-      <button class="btn btn-xs btn-outline" id="currentSiteBtn">В VPN</button>
+      <div class="site-quick-actions">
+        <button class="btn btn-xs btn-accent" id="geminiSiteQuickBtn" style="display:none;" title="Привязать этот домен к серверу США">🇺🇸 Режим США</button>
+        <button class="btn btn-xs btn-outline" id="currentSiteBtn">В VPN</button>
+      </div>
     </div>
 
-    <!-- Active Server Bar -->
+    <!-- Gemini AI Task Mode Featured Card -->
+    <div class="gemini-card" id="geminiFeatureCard">
+      <div class="gemini-card-header">
+        <div class="gemini-badge">
+          <span class="gemini-icon">✨</span>
+          <div class="gemini-title-box">
+            <span class="gemini-title">Режим задач Gemini (США)</span>
+            <span class="gemini-sub">gemini.google.com & AI Studio</span>
+          </div>
+        </div>
+        <label class="switch switch-sm" title="Включить / Выключить выделенный туннель США для Gemini">
+          <input type="checkbox" id="geminiToggle" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="gemini-card-body">
+        <div class="gemini-server-row">
+          <select id="geminiServerSelect" class="gemini-select" title="Выберите американский узел связи для задач Gemini">
+            <!-- Populated with US servers -->
+          </select>
+          <span class="gemini-port-tag" id="geminiPortTag" title="Выделенный локальный порт для сервисов Gemini">10820</span>
+        </div>
+        <div class="gemini-hint">14 доменов Gemini и Google AI Studio направляются через сервер США с защитой от сбоев.</div>
+      </div>
+    </div>
+
+    <!-- Active Server Bar (General Traffic) -->
     <div class="active-server-bar">
       <div class="active-server-info">
         <span class="active-server-flag" id="activeServerFlag">🌐</span>
-        <span class="active-server-value" id="activeServerHeader">Загрузка...</span>
+        <div class="active-server-text-wrap">
+          <span class="active-server-caption">Основной VPN:</span>
+          <span class="active-server-value" id="activeServerHeader">Загрузка...</span>
+        </div>
       </div>
       <span class="active-server-ping" id="activeServerPing">-</span>
     </div>
 
     <!-- Mode Selector -->
     <div class="mode-selector">
-      <button class="mode-btn active" data-mode="smart" id="modeSmartBtn">
+      <button class="mode-btn active" data-mode="smart" id="modeSmartBtn" title="Маршрутизация только нужных сайтов без конфликта с сетью и играми">
         <span>Умный PAC</span>
       </button>
-      <button class="mode-btn" data-mode="all" id="modeAllBtn">
+      <button class="mode-btn" data-mode="all" id="modeAllBtn" title="Весь веб-трафик браузера через VPN">
         <span>Весь трафик</span>
       </button>
-      <button class="mode-btn" data-mode="direct" id="modeDirectBtn">
+      <button class="mode-btn" data-mode="direct" id="modeDirectBtn" title="Отключить проксирование в браузере">
         <span>Отключен</span>
       </button>
     </div>
 
-    <!-- Navigation -->
+    <!-- Navigation Tabs -->
     <nav class="nav-tabs">
       <button class="nav-tab active" data-tab="servers">Серверы (<span id="serversCountBadge">0</span>)</button>
-      <button class="nav-tab" data-tab="routing">Маршруты</button>
-      <button class="nav-tab" data-tab="diagnostics">Аудит & Ошибки</button>
+      <button class="nav-tab" data-tab="routing">Маршруты сайтов (<span id="domainRulesCountBadge">0</span>)</button>
+      <button class="nav-tab" data-tab="diagnostics">Аудит & Сеть</button>
       <button class="nav-tab" data-tab="settings">Настройки</button>
     </nav>
 
     <!-- Tab: Servers -->
     <div class="tab-pane active" id="tab-servers">
       <div class="sub-input-group">
-        <input type="text" id="subUrlInput" placeholder="Ссылка на подписку или ключ">
+        <input type="text" id="subUrlInput" placeholder="Ссылка на подписку или ключ (vless/hy2/ss)">
         <button class="btn btn-primary btn-sm" id="refreshSubBtn">Обновить</button>
       </div>
 
@@ -79,6 +125,7 @@
       <div class="servers-filter-row">
         <input type="text" id="serverSearchInput" placeholder="Поиск серверов...">
         <button class="btn btn-accent btn-xs" id="minPingBtn" title="Найти сервер с минимальным пингом и подключиться">⚡ Мин. пинг</button>
+        <button class="btn btn-secondary btn-xs" id="findUsServerBtn" title="Найти лучший сервер США">🇺🇸 Сервер США</button>
         <button class="btn btn-outline btn-xs" id="pingAllBtn" title="Проверить пинг всех серверов">🔄 Пинг</button>
       </div>
 
@@ -87,30 +134,67 @@
 
     <!-- Tab: Routing -->
     <div class="tab-pane" id="tab-routing">
-      <div class="add-domain-box">
-        <input type="text" id="newDomainInput" placeholder="Домен (напр. chatgpt.com)">
-        <select id="domainTargetType">
-          <option value="proxy">В VPN</option>
-          <option value="bypass">В Direct</option>
-        </select>
-        <button class="btn btn-primary btn-sm" id="addDomainBtn">Добавить</button>
+      <div class="routing-subtabs">
+        <button class="route-subtab active" id="subTabDedicated">Выделенные серверы (<span id="customServerCount">0</span>)</button>
+        <button class="route-subtab" id="subTabProxy">В VPN (<span id="proxyCount">0</span>)</button>
+        <button class="route-subtab" id="subTabBypass">В Direct (<span id="bypassCount">0</span>)</button>
       </div>
 
-      <div class="list-subnav">
-        <div class="segmented-sub">
-          <button class="sub-tab active" id="subTabProxy">VPN (<span id="proxyCount">0</span>)</button>
-          <button class="sub-tab" id="subTabBypass">Direct (<span id="bypassCount">0</span>)</button>
+      <!-- Pane: Dedicated Servers per Domain -->
+      <div class="routing-subpane active" id="subpaneDedicated">
+        <div class="gemini-preset-banner">
+          <div class="preset-text">
+            <b>⚡ Пресет: Режим задач Gemini (14 доменов)</b>
+            <span>Направляет gemini.google.com, AI Studio и Code Execution на сервер США</span>
+          </div>
+          <button class="btn btn-accent btn-xs" id="applyGeminiPresetBtn">Применить</button>
         </div>
-        <input type="text" class="search-mini" id="domainSearchInput" placeholder="Поиск...">
+
+        <div class="add-domain-box multi-route-box">
+          <input type="text" id="newDedicatedDomainInput" placeholder="Домен (напр. gemini.google.com)">
+          <select id="newDedicatedServerSelect">
+            <!-- Populated dynamically -->
+          </select>
+          <button class="btn btn-primary btn-sm" id="addDedicatedRouteBtn">Привязать</button>
+        </div>
+
+        <div class="filter-mini-row">
+          <input type="text" class="search-mini" id="dedicatedSearchInput" placeholder="Поиск привязок сайтов...">
+          <button class="btn btn-outline btn-xs" id="clearCustomRoutesBtn" title="Очистить пользовательские привязки">Сброс</button>
+        </div>
+
+        <div class="domain-list" id="dedicatedListContainer"></div>
       </div>
 
-      <div class="domain-list" id="domainListContainer"></div>
+      <!-- Pane: General Proxy Domains -->
+      <div class="routing-subpane" id="subpaneProxy">
+        <div class="add-domain-box">
+          <input type="text" id="newDomainInput" placeholder="Домен (напр. chatgpt.com)">
+          <button class="btn btn-primary btn-sm" id="addDomainBtn">В VPN</button>
+        </div>
+        <div class="filter-mini-row">
+          <input type="text" class="search-mini" id="domainSearchInput" placeholder="Поиск в VPN...">
+        </div>
+        <div class="domain-list" id="domainListContainer"></div>
+      </div>
+
+      <!-- Pane: Direct Bypass Domains -->
+      <div class="routing-subpane" id="subpaneBypass">
+        <div class="add-domain-box">
+          <input type="text" id="newBypassDomainInput" placeholder="Домен для прямого доступа (напр. yandex.ru)">
+          <button class="btn btn-primary btn-sm" id="addBypassDomainBtn">В Direct</button>
+        </div>
+        <div class="filter-mini-row">
+          <input type="text" class="search-mini" id="bypassSearchInput" placeholder="Поиск в Direct...">
+        </div>
+        <div class="domain-list" id="bypassListContainer"></div>
+      </div>
     </div>
 
-    <!-- Tab: Diagnostics -->
+    <!-- Tab: Diagnostics & Network Audit -->
     <div class="tab-pane" id="tab-diagnostics">
       <div class="diag-header-row">
-        <div class="diag-title">Аудит подключения и устранение ошибок</div>
+        <div class="diag-title">Аудит сетевого туннеля и изоляция</div>
         <button class="btn btn-primary btn-xs" id="runDiagBtn">Проверить</button>
       </div>
 
@@ -120,16 +204,26 @@
           <div class="diag-card-status" id="diagServiceStatus">Проверка...</div>
         </div>
         <div class="diag-card" id="diagXrayCard">
-          <div class="diag-card-title">Ядро Xray (10818/10819)</div>
+          <div class="diag-card-title">Основное ядро (10818/10819)</div>
           <div class="diag-card-status" id="diagXrayStatus">Проверка...</div>
+        </div>
+        <div class="diag-card" id="diagUsTunnelCard">
+          <div class="diag-card-title">US-туннель Gemini (10820/10821)</div>
+          <div class="diag-card-status" id="diagUsTunnelStatus">Активен</div>
         </div>
         <div class="diag-card" id="diagExternalCard">
           <div class="diag-card-title">Резерв v2RayTun (10808)</div>
           <div class="diag-card-status" id="diagExternalStatus">Проверка...</div>
         </div>
-        <div class="diag-card" id="diagServerCard">
-          <div class="diag-card-title">Активный узел связи</div>
-          <div class="diag-card-status" id="diagServerStatus">Проверка...</div>
+      </div>
+
+      <div class="network-safety-banner">
+        <div class="safety-title">🛡️ Защита основной сети (Zero Conflict):</div>
+        <div class="safety-features">
+          <span class="safety-item">✔ Локальная сеть и 127.0.0.1 изолированы от VPN</span>
+          <span class="safety-item">✔ Трафик YouTube идет напрямую через zapret (полная скорость)</span>
+          <span class="safety-item">✔ Сервисы РФ (.ru, банки, госуслуги) в прямом доступе</span>
+          <span class="safety-item">✔ Игры и системные соединения не затрагиваются</span>
         </div>
       </div>
 
@@ -149,22 +243,22 @@
         <div class="field-group" style="margin-bottom: 10px;">
           <select id="coreModeSelect">
             <option value="auto">Авто (West Core -> v2RayTun резерв)</option>
-            <option value="west">Только West Core (10818)</option>
+            <option value="west">Только West Core (10818/10820)</option>
             <option value="external">Только v2RayTun / Happ (10808)</option>
           </select>
         </div>
         <div class="setting-desc" style="margin-bottom: 8px;">
-          При режиме «Авто» расширение использует собственное ядро, а при его отсутствии мгновенно переключается на работающий v2RayTun без разрыва связи.
+          При режиме «Авто» расширение использует собственное ядро с поддержкой раздельных серверов по доменам, а при его отсутствии переключается на v2RayTun.
         </div>
       </div>
 
       <div class="settings-card">
-        <div class="settings-title">Защита и Маршрутизация</div>
+        <div class="settings-title">Защита и Совместимость с сетью</div>
         
         <label class="setting-row">
           <div class="setting-info">
-            <div class="setting-name">YouTube Direct (Zapret)</div>
-            <div class="setting-desc">YouTube направляется напрямую мимо VPN</div>
+            <div class="setting-name">YouTube Direct (Zapret winws)</div>
+            <div class="setting-desc">YouTube направляется напрямую мимо VPN на максимальной скорости</div>
           </div>
           <input type="checkbox" id="ytShieldToggle" checked>
         </label>
@@ -172,9 +266,17 @@
         <label class="setting-row">
           <div class="setting-info">
             <div class="setting-name">Игнорировать Localhost & LAN</div>
-            <div class="setting-desc">Локальные адреса идут напрямую</div>
+            <div class="setting-desc">127.0.0.1, 192.168.*, локальные базы и порты всегда напрямую</div>
           </div>
           <input type="checkbox" id="lanShieldToggle" checked>
+        </label>
+
+        <label class="setting-row">
+          <div class="setting-info">
+            <div class="setting-name">Выделенный туннель США для Gemini</div>
+            <div class="setting-desc">Автоматическая маршрутизация Gemini Task Mode через порт 10820</div>
+          </div>
+          <input type="checkbox" id="settingsGeminiToggle" checked>
         </label>
 
         <label class="setting-row">
@@ -187,19 +289,23 @@
       </div>
 
       <div class="settings-card">
-        <div class="settings-title">Порты ядра</div>
+        <div class="settings-title">Сетевые порты туннелей</div>
         <div class="field-grid">
           <div class="field-group">
             <label>Хост</label>
             <input type="text" id="proxyHostInput" value="127.0.0.1">
           </div>
           <div class="field-group">
-            <label>SOCKS5 Порт</label>
+            <label>Основной SOCKS5</label>
             <input type="number" id="proxyPortInput" value="10818">
           </div>
           <div class="field-group">
-            <label>HTTP Порт</label>
+            <label>Основной HTTP</label>
             <input type="number" id="httpPortInput" value="10819">
+          </div>
+          <div class="field-group">
+            <label>US SOCKS5 (Gemini)</label>
+            <input type="number" id="usProxyPortInput" value="10820">
           </div>
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">

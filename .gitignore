@@ -1,16 +1,15 @@
-# State and temporary runtime files
-bridge_state.json
-connection.json
-test_config.json
+# Temporary, backup, and state files
+*.bak
+*.bak_*
 *.log
-
-# Private keys
-*.pem
-
-# Python
+crash.log
 __pycache__/
+core/__pycache__/
+core/state.json
+core/active_config.json
+core/domain_routes.json
 *.pyc
 
-# OS files
+# OS
 Thumbs.db
 .DS_Store

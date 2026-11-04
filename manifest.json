@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "West VPN Client",
-  "version": "1.3.0",
-  "description": "Клиент маршрутизации VPN и прокси для Cent Browser, Chrome и LibreWolf с защитой локальной сети и прямой отдачей YouTube через zapret",
+  "version": "1.4.0",
+  "description": "Клиент маршрутизации VPN и прокси для Chrome, Cent Browser и LibreWolf с поддержкой режима задач Gemini (США), раздельной привязкой серверов по сайтам, защитой локальной сети и zapret-совместимостью",
   "browser_specific_settings": {
     "gecko": {
       "id": "west-vpn-client@wild.local",

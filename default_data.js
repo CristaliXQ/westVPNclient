@@ -9,6 +9,26 @@ const DEFAULT_CONFIG = {
   httpPort: 10819,
   youtubeDirect: true,
   localBypass: true,
+  usProxyPort: 10820,
+  usHttpPort: 10821,
+  geminiUsRouting: true,
+  geminiServerId: "srv_27",
+  domainRoutes: {
+    "gemini.google.com": "srv_27",
+    "aistudio.google.com": "srv_27",
+    "alkalimakersuite-pa.clients6.google.com": "srv_27",
+    "generativelanguage.googleapis.com": "srv_27",
+    "makersuite.google.com": "srv_27",
+    "bard.google.com": "srv_27",
+    "deepmind.google": "srv_27",
+    "notebooklm.google.com": "srv_27",
+    "aisandbox-pa.googleapis.com": "srv_27",
+    "proactivebackend-pa.googleapis.com": "srv_27",
+    "cloudaicompanion.googleapis.com": "srv_27",
+    "tasks.google.com": "srv_27",
+    "tasks.sandbox.google.com": "srv_27",
+    "tasks-pa.clients6.google.com": "srv_27"
+  },
   subscriptionUrl: "https://xpnetsub.space/sub/FDffPVcmqpN42V4-",
   subscriptionInfo: "TG - @xpnetvpn • 📅 120д.",
   lastUpdated: Date.now(),
@@ -1633,5 +1653,43 @@ function parseSubscriptionText(raw) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { DEFAULT_CONFIG, cleanDomain, safeDecodeB64Utf8, safeEncodeB64Utf8, extractFlag, cleanServerName, parseSubscriptionText, parseClashYaml, parseSingboxJson };
+const GEMINI_DOMAINS = [
+  "gemini.google.com",
+  "aistudio.google.com",
+  "alkalimakersuite-pa.clients6.google.com",
+  "generativelanguage.googleapis.com",
+  "makersuite.google.com",
+  "bard.google.com",
+  "deepmind.google",
+  "notebooklm.google.com",
+  "aisandbox-pa.googleapis.com",
+  "proactivebackend-pa.googleapis.com",
+  "cloudaicompanion.googleapis.com",
+  "tasks.google.com",
+  "tasks.sandbox.google.com",
+  "tasks-pa.clients6.google.com"
+];
+
+function findUsServer(servers) {
+  if (!servers || !servers.length) return null;
+  const usAi = servers.find(s => {
+    const n = (s.name || "").toLowerCase();
+    return (s.flag === "🇺🇸" || n.includes("usa") || n.includes("us ") || n.includes("united states")) &&
+           n.includes("ai") && (s.proto || "").toLowerCase() === "vless";
+  });
+  if (usAi) return usAi;
+  const usVless = servers.find(s => {
+    const n = (s.name || "").toLowerCase();
+    return (s.flag === "🇺🇸" || n.includes("usa") || n.includes("us ") || n.includes("united states")) &&
+           (s.proto || "").toLowerCase() === "vless";
+  });
+  if (usVless) return usVless;
+  const usAny = servers.find(s => {
+    const n = (s.name || "").toLowerCase();
+    return s.flag === "🇺🇸" || n.includes("usa") || n.includes("us ") || n.includes("united states") || (s.host && s.host.toLowerCase().includes("-us-"));
+  });
+  return usAny || null;
+}
+
+  module.exports = { DEFAULT_CONFIG, GEMINI_DOMAINS, findUsServer, cleanDomain, safeDecodeB64Utf8, safeEncodeB64Utf8, extractFlag, cleanServerName, parseSubscriptionText, parseClashYaml, parseSingboxJson };
 }

@@ -116,6 +116,46 @@ function generatePacScript(cfg) {
     lines.push("  }");
   }
 
+  // Custom per-domain server routing (e.g. Gemini Task Mode -> US Server)
+  var dRoutes = cfg.domainRoutes || {};
+  var usPort = cfg.usProxyPort || 10820;
+  var usDirective = "SOCKS5 127.0.0.1:" + usPort + "; SOCKS 127.0.0.1:" + usPort + "; " + proxyDirective;
+  var usDomains = [];
+  var customProxyDomains = [];
+
+  for (var domKey in dRoutes) {
+    if (!Object.prototype.hasOwnProperty.call(dRoutes, domKey)) continue;
+    var sid = dRoutes[domKey];
+    var cDom = cleanDomainForPac(domKey);
+    if (!cDom) continue;
+    if (sid === "direct") {
+      continue;
+    }
+    var isUs = (sid === cfg.geminiServerId) ||
+      (cfg.servers || []).some(function(s) {
+        return s.id === sid && (s.flag === "🇺🇸" || (s.name && (s.name.indexOf("USA") !== -1 || s.name.indexOf("US ") !== -1)));
+      });
+    if (isUs) {
+      usDomains.push(cDom);
+    } else {
+      customProxyDomains.push(cDom);
+    }
+  }
+
+  if (usDomains.length > 0) {
+    lines.push("  var usDoms = " + JSON.stringify(Array.from(new Set(usDomains))) + ";");
+    lines.push("  for (var u = 0; u < usDoms.length; u++) {");
+    lines.push("    if (matchHost(host, usDoms[u])) return '" + usDirective + "';");
+    lines.push("  }");
+  }
+
+  if (customProxyDomains.length > 0) {
+    lines.push("  var custDoms = " + JSON.stringify(Array.from(new Set(customProxyDomains))) + ";");
+    lines.push("  for (var c = 0; c < custDoms.length; c++) {");
+    lines.push("    if (matchHost(host, custDoms[c])) return '" + proxyDirective + "';");
+    lines.push("  }");
+  }
+
   // All traffic mode vs Smart PAC mode
   if (mode === "all") {
     lines.push("  return '" + proxyDirective + "';");
@@ -264,6 +304,16 @@ async function syncServersToBackend(servers) {
   } catch(e) {}
 }
 
+async function syncDomainRoutesToBackend(domainRoutes) {
+  try {
+    await fetch("http://127.0.0.1:10850/set_domain_routes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domainRoutes: domainRoutes || {} })
+    });
+  } catch(e) {}
+}
+
 let serviceOnline = false;
 let serviceReconnecting = false;
 
@@ -317,9 +367,21 @@ chrome.runtime.onInstalled.addListener(async () => {
     await setupSubscriptionRule(DEFAULT_CONFIG.subscriptionUrl);
   } else {
     cfg = existing.config;
+    let modified = false;
+    if (!cfg.domainRoutes) {
+      cfg.domainRoutes = { ...(DEFAULT_CONFIG.domainRoutes || {}) };
+      modified = true;
+    }
+    if (cfg.geminiUsRouting === undefined) {
+      cfg.geminiUsRouting = true;
+      modified = true;
+    }
     const missing = DEFAULT_CONFIG.proxyDomains.filter(d => !cfg.proxyDomains.includes(d) && !(cfg.bypassDomains || []).includes(d));
     if (missing.length > 0) {
       cfg.proxyDomains = [...(cfg.proxyDomains || []), ...missing];
+      modified = true;
+    }
+    if (modified) {
       await chrome.storage.local.set({ config: cfg });
     }
     await setupSubscriptionRule(cfg.subscriptionUrl || DEFAULT_CONFIG.subscriptionUrl);
@@ -327,6 +389,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   await applyProxySettings();
   checkServiceHealthAndSync();
   syncServersToBackend(cfg.servers || DEFAULT_CONFIG.servers);
+  syncDomainRoutesToBackend(cfg.domainRoutes || DEFAULT_CONFIG.domainRoutes);
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -335,6 +398,7 @@ chrome.runtime.onStartup.addListener(async () => {
   const cfg = existing?.config || DEFAULT_CONFIG;
   checkServiceHealthAndSync();
   syncServersToBackend(cfg.servers || DEFAULT_CONFIG.servers);
+  syncDomainRoutesToBackend(cfg.domainRoutes || DEFAULT_CONFIG.domainRoutes);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -540,6 +604,94 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(data);
       } catch(e) {
         sendResponse({ success: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "SET_DOMAIN_ROUTE") {
+    (async () => {
+      try {
+        const data = await chrome.storage.local.get("config");
+        const cfg = data.config || DEFAULT_CONFIG;
+        if (!cfg.domainRoutes) cfg.domainRoutes = {};
+        const domain = cleanDomainForPac(message.domain);
+        if (domain) {
+          cfg.domainRoutes[domain] = message.serverId;
+          if (message.serverId === "direct") {
+            if (!cfg.bypassDomains.includes(domain)) cfg.bypassDomains.push(domain);
+            cfg.proxyDomains = (cfg.proxyDomains || []).filter(d => d !== domain);
+          } else {
+            if (!cfg.proxyDomains.includes(domain)) cfg.proxyDomains.push(domain);
+            cfg.bypassDomains = (cfg.bypassDomains || []).filter(d => d !== domain);
+          }
+          await chrome.storage.local.set({ config: cfg });
+          await applyProxySettings();
+          syncDomainRoutesToBackend(cfg.domainRoutes);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: "Некорректный домен" });
+        }
+      } catch(err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "REMOVE_DOMAIN_ROUTE") {
+    (async () => {
+      try {
+        const data = await chrome.storage.local.get("config");
+        const cfg = data.config || DEFAULT_CONFIG;
+        if (cfg.domainRoutes && message.domain) {
+          const domain = cleanDomainForPac(message.domain);
+          delete cfg.domainRoutes[domain];
+          await chrome.storage.local.set({ config: cfg });
+          await applyProxySettings();
+          syncDomainRoutesToBackend(cfg.domainRoutes);
+        }
+        sendResponse({ success: true });
+      } catch(err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "TOGGLE_GEMINI_US") {
+    (async () => {
+      try {
+        const data = await chrome.storage.local.get("config");
+        const cfg = data.config || DEFAULT_CONFIG;
+        cfg.geminiUsRouting = !!message.enabled;
+        const usSrv = message.serverId || cfg.geminiServerId || (typeof findUsServer === "function" ? findUsServer(cfg.servers || DEFAULT_CONFIG.servers)?.id : null) || "srv_27";
+        cfg.geminiServerId = usSrv;
+        if (!cfg.domainRoutes) cfg.domainRoutes = {};
+
+        const geminiList = (typeof GEMINI_DOMAINS !== "undefined" && GEMINI_DOMAINS) || [
+          "gemini.google.com", "aistudio.google.com", "alkalimakersuite-pa.clients6.google.com",
+          "generativelanguage.googleapis.com", "makersuite.google.com", "bard.google.com",
+          "deepmind.google", "notebooklm.google.com", "aisandbox-pa.googleapis.com",
+          "proactivebackend-pa.googleapis.com", "cloudaicompanion.googleapis.com",
+          "tasks.google.com", "tasks.sandbox.google.com", "tasks-pa.clients6.google.com"
+        ];
+
+        for (const gd of geminiList) {
+          if (cfg.geminiUsRouting) {
+            cfg.domainRoutes[gd] = usSrv;
+            if (!cfg.proxyDomains.includes(gd)) cfg.proxyDomains.push(gd);
+            cfg.bypassDomains = (cfg.bypassDomains || []).filter(d => d !== gd);
+          } else {
+            delete cfg.domainRoutes[gd];
+          }
+        }
+        await chrome.storage.local.set({ config: cfg });
+        await applyProxySettings();
+        syncDomainRoutesToBackend(cfg.domainRoutes);
+        sendResponse({ success: true, enabled: cfg.geminiUsRouting, serverId: usSrv });
+      } catch(err) {
+        sendResponse({ success: false, error: err.message });
       }
     })();
     return true;
