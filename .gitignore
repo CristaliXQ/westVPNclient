@@ -2,12 +2,14 @@
 *.bak
 *.bak_*
 *.log
+*.pid
 crash.log
 __pycache__/
 core/__pycache__/
 core/state.json
 core/active_config.json
 core/domain_routes.json
+core/west_service.pid
 *.pyc
 
 # OS

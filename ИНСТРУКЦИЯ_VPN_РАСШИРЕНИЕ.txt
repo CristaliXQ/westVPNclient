@@ -1,10 +1,22 @@
-ИНСТРУКЦИЯ ПО УСТАНОВКЕ И НАСТРОЙКЕ WEST CLIENT VPN BROWSER
-===========================================================
-Папка расширения: D:\west client VPN browser
-Служба ядра: D:\west client VPN browser\start_service.vbs (или start_service.bat)
+ИНСТРУКЦИЯ ПО УСТАНОВКЕ И НАСТРОЙКЕ WEST CLIENT VPN BROWSER (WINDOWS & LINUX)
+=============================================================================
+Папка расширения: D:\west client VPN browser (или путь на Linux)
+Служба ядра Windows: start_service.vbs (или start_service.bat)
+Служба ядра Linux  : ./install_linux.sh или ./start_service.sh / systemctl --user start west-client
 
-1. КАК УСТАНОВИТЬ РАСШИРЕНИЕ В CENT BROWSER / CHROME:
------------------------------------------------------
+1. КАК ЗАПУСТИТЬ СЛУЖБУ ЯДРА НА LINUX:
+--------------------------------------
+1. В терминале в папке проекта:
+   chmod +x install_linux.sh
+   ./install_linux.sh
+2. Управление:
+   • Запуск вручную: ./start_service.sh
+   • Остановка:      ./stop_service.sh
+   • Перезапуск:     ./restart.sh
+   • Служба systemd: systemctl --user enable --now west-client
+
+2. КАК УСТАНОВИТЬ РАСШИРЕНИЕ В CENT BROWSER / CHROME / BRAVE:
+-------------------------------------------------------------
 1. Откройте Cent Browser (или Chrome / Brave / Edge).
 2. В адресную строку вставьте и нажмите Enter:
    chrome://extensions

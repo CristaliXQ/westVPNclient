@@ -1,6 +1,7 @@
 import subprocess
 import os
 import sys
+import signal
 
 _dll_dir = os.path.join(os.path.dirname(sys.executable), "DLLs")
 if os.path.exists(_dll_dir) and hasattr(os, "add_dll_directory"):
@@ -13,6 +14,7 @@ import json
 import time
 
 CREATION_FLAGS = 0x08000000 if os.name == "nt" else 0
+XRAY_PROC_NAMES = ('xraycore.exe', 'xray.exe', 'xraycore', 'xray', 'xray-linux-64')
 
 def terminate_west_xray():
     core_dir = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +50,7 @@ def terminate_west_xray():
         for p in psutil.process_iter(['pid', 'name']):
             try:
                 name = (p.info.get('name') or '').lower()
-                if name in ('xraycore.exe', 'xray.exe'):
+                if name in XRAY_PROC_NAMES or name.startswith('xray'):
                     xray_pids.add(p.pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
@@ -56,19 +58,44 @@ def terminate_west_xray():
     except Exception:
         psutil_ok = False
 
-    # 4. PowerShell fallback only if psutil failed or is unavailable
+    # 4. Fallback only if psutil failed or is unavailable
     if not psutil_ok and not xray_pids:
-        try:
-            ps_cmd = [
-                "powershell", "-NoProfile", "-Command",
-                "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*xray*') -and ($_.CommandLine -like '*active_config.json*') } | Select-Object -ExpandProperty ProcessId"
-            ]
-            res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS)
-            for line in res.stdout.split():
-                if line.strip().isdigit():
-                    xray_pids.add(int(line.strip()))
-        except Exception:
-            pass
+        if os.name == "nt":
+            try:
+                ps_cmd = [
+                    "powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*xray*') -and ($_.CommandLine -like '*active_config.json*') } | Select-Object -ExpandProperty ProcessId"
+                ]
+                res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS)
+                for line in res.stdout.split():
+                    if line.strip().isdigit():
+                        xray_pids.add(int(line.strip()))
+            except Exception:
+                pass
+        else:
+            try:
+                if os.path.isdir("/proc"):
+                    for entry in os.listdir("/proc"):
+                        if entry.isdigit():
+                            pid = int(entry)
+                            cmdline_path = f"/proc/{pid}/cmdline"
+                            try:
+                                with open(cmdline_path, "rb") as cf:
+                                    raw_cmd = cf.read().decode("utf-8", "ignore").replace("\x00", " ").lower()
+                                if "active_config.json" in raw_cmd and "xray" in raw_cmd:
+                                    xray_pids.add(pid)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            if not xray_pids:
+                try:
+                    p_res = subprocess.run(["pgrep", "-f", "active_config.json"], capture_output=True, text=True, timeout=3)
+                    for line in p_res.stdout.split():
+                        if line.strip().isdigit():
+                            xray_pids.add(int(line.strip()))
+                except Exception:
+                    pass
 
     # STRICT SAFETY: Ensure every PID targeted is an xraycore process running active_config.json or inside West Client
     for pid in list(xray_pids):
@@ -78,24 +105,35 @@ def terminate_west_xray():
                 import psutil
                 proc = psutil.Process(pid)
                 name = proc.name().lower()
-                if name not in ('xraycore.exe', 'xray.exe'):
+                if not (name in XRAY_PROC_NAMES or name.startswith('xray')):
                     continue
                 exe_path = os.path.realpath(proc.exe() or "").lower()
                 cmd = " ".join(proc.cmdline() or []).lower()
                 if (real_core_dir in exe_path) or ("active_config.json" in cmd) or ("west client" in exe_path) or ("west client" in cmd):
                     is_safe = True
             except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
-                try:
-                    ps_verify = [
-                        "powershell", "-NoProfile", "-Command",
-                        f"(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -eq {pid} }} | Select-Object -ExpandProperty CommandLine)"
-                    ]
-                    v_res = subprocess.run(ps_verify, capture_output=True, text=True, timeout=3, creationflags=CREATION_FLAGS)
-                    v_out = v_res.stdout.lower()
-                    if "active_config.json" in v_out or "west client" in v_out:
-                        is_safe = True
-                except Exception:
-                    pass
+                if os.name == "nt":
+                    try:
+                        ps_verify = [
+                            "powershell", "-NoProfile", "-Command",
+                            f"(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -eq {pid} }} | Select-Object -ExpandProperty CommandLine)"
+                        ]
+                        v_res = subprocess.run(ps_verify, capture_output=True, text=True, timeout=3, creationflags=CREATION_FLAGS)
+                        v_out = v_res.stdout.lower()
+                        if "active_config.json" in v_out or "west client" in v_out:
+                            is_safe = True
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        cmd_file = f"/proc/{pid}/cmdline"
+                        if os.path.exists(cmd_file):
+                            with open(cmd_file, "rb") as cf:
+                                c_bytes = cf.read().decode("utf-8", "ignore").replace("\x00", " ").lower()
+                            if "active_config.json" in c_bytes or real_core_dir in c_bytes:
+                                is_safe = True
+                    except Exception:
+                        pass
 
             if not is_safe:
                 continue
@@ -112,7 +150,13 @@ def terminate_west_xray():
             except psutil.NoSuchProcess:
                 pass
             except Exception:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
+                else:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -140,7 +184,7 @@ def restart_west_service():
     # 1. Terminate West Client's own xraycore first
     terminate_west_xray()
 
-    # 2. Query for any pythonw.exe or python.exe running west_service via psutil first
+    # 2. Query for any python process running west_service via psutil first
     pids = []
     my_pid = os.getpid()
     psutil_found = False
@@ -149,7 +193,7 @@ def restart_west_service():
         for p in psutil.process_iter(['pid', 'name']):
             try:
                 name = (p.info.get('name') or '').lower()
-                if name in ('pythonw.exe', 'python.exe'):
+                if name.startswith('python'):
                     cmd = " ".join(p.cmdline() or []).lower()
                     if "west_service" in cmd and p.pid != my_pid:
                         pids.append(p.pid)
@@ -160,15 +204,34 @@ def restart_west_service():
         psutil_found = False
 
     if not psutil_found:
-        ps_cmd = [
-            "powershell", "-NoProfile", "-Command",
-            "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and $_.CommandLine -like '*west_service*' } | Select-Object -ExpandProperty ProcessId"
-        ]
-        try:
-            res = subprocess.run(ps_cmd, capture_output=True, text=True, creationflags=CREATION_FLAGS)
-            pids = [int(p.strip()) for p in res.stdout.split() if p.strip().isdigit() and int(p.strip()) != my_pid]
-        except Exception:
-            pids = []
+        if os.name == "nt":
+            ps_cmd = [
+                "powershell", "-NoProfile", "-Command",
+                "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like 'python*') -and $_.CommandLine -like '*west_service*' } | Select-Object -ExpandProperty ProcessId"
+            ]
+            try:
+                res = subprocess.run(ps_cmd, capture_output=True, text=True, creationflags=CREATION_FLAGS)
+                pids = [int(p.strip()) for p in res.stdout.split() if p.strip().isdigit() and int(p.strip()) != my_pid]
+            except Exception:
+                pids = []
+        else:
+            try:
+                if os.path.isdir("/proc"):
+                    for entry in os.listdir("/proc"):
+                        if entry.isdigit():
+                            pid = int(entry)
+                            if pid == my_pid:
+                                continue
+                            cmdline_path = f"/proc/{pid}/cmdline"
+                            try:
+                                with open(cmdline_path, "rb") as cf:
+                                    raw_cmd = cf.read().decode("utf-8", "ignore").replace("\x00", " ").lower()
+                                if "west_service" in raw_cmd and "python" in raw_cmd:
+                                    pids.append(pid)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
     for pid in pids:
         print(f"Stopping old service PID {pid}...")
@@ -181,7 +244,13 @@ def restart_west_service():
             except Exception:
                 p.kill()
         except Exception:
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
 
     # 3. Wait for ports 10850 and 10818 to release and become freely bindable
     deadline = time.time() + 3.0
@@ -194,14 +263,18 @@ def restart_west_service():
     core_dir = os.path.dirname(os.path.abspath(__file__))
     service_script = os.path.join(core_dir, "west_service.py")
     creation_flags = 0x08000000 if os.name == "nt" else 0
-    pythonw_exe = sys.executable.replace("python.exe", "pythonw.exe") if "python.exe" in sys.executable.lower() else "pythonw.exe"
-    if not os.path.exists(pythonw_exe):
-        pythonw_exe = "pythonw.exe"
+    if os.name == "nt":
+        python_bin = sys.executable.replace("python.exe", "pythonw.exe") if "python.exe" in sys.executable.lower() else "pythonw.exe"
+        if not os.path.exists(python_bin):
+            python_bin = "pythonw.exe"
+    else:
+        python_bin = sys.executable if (sys.executable and os.path.isfile(sys.executable)) else "python3"
 
     subprocess.Popen(
-        [pythonw_exe, service_script],
+        [python_bin, service_script],
         cwd=core_dir,
         creationflags=creation_flags,
+        start_new_session=(os.name != "nt"),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL

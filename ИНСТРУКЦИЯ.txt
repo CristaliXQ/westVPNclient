@@ -1,31 +1,41 @@
-ИНСТРУКЦИЯ ПО УСТАНОВКЕ И НАСТРОЙКЕ WEST CLIENT VPN BROWSER
-===========================================================
-Папка расширения: D:\west client VPN browser
-Служба ядра: D:\west client VPN browser\start_service.vbs (или start_service.bat)
+ИНСТРУКЦИЯ ПО УСТАНОВКЕ И НАСТРОЙКЕ WEST CLIENT VPN BROWSER (WINDOWS & LINUX)
+=============================================================================
+Папка расширения: D:\west client VPN browser (или путь на Linux)
+Служба ядра на Windows: start_service.vbs (или start_service.bat)
+Служба ядра на Linux  : ./install_linux.sh или ./start_service.sh / systemctl --user start west-client
 
-1. КАК УСТАНОВИТЬ РАСШИРЕНИЕ В CENT BROWSER / CHROME:
------------------------------------------------------
-1. Откройте Cent Browser (или Chrome / Brave / Edge).
+1. БЫСТРЫЙ СТАРТ НА LINUX:
+--------------------------
+1. Откройте терминал в папке проекта:
+   chmod +x install_linux.sh
+   ./install_linux.sh
+2. Запуск службы:
+   • В фоне: ./start_service.sh
+   • Остановка: ./stop_service.sh
+   • Как демон systemd (автозагрузка): systemctl --user enable --now west-client
+
+2. КАК УСТАНОВИТЬ РАСШИРЕНИЕ В CENT BROWSER / CHROME / BRAVE (WINDOWS & LINUX):
+-------------------------------------------------------------------------------
+1. Откройте браузер (Chrome / Cent Browser / Brave / Edge / Chromium).
 2. В адресную строку вставьте и нажмите Enter:
    chrome://extensions
 3. В правом верхнем углу включите тумблер: "Режим разработчика" (Developer mode).
 4. В левом верхнем углу нажмите кнопку: "Загрузить распакованное расширение" (Load unpacked).
-5. В открывшемся проводнике выберите папку:
-   D:\west client VPN browser
-   и нажмите "Выбор папки".
+5. В открывшемся проводнике выберите папку проекта и нажмите "Выбор папки".
 6. Нажмите на значок "Пазл" (Расширения) справа от адресной строки и закрепите значок West VPN Client.
 
-2. ДЛЯ LIBREWOLF / FIREFOX:
----------------------------
-- Перетащите файл D:\west client VPN browser\west-vpn-client.xpi в окно браузера LibreWolf / Firefox и подтвердите установку.
+3. ДЛЯ LIBREWOLF / FIREFOX (WINDOWS & LINUX):
+--------------------------------------------
+- Перетащите файл west-vpn-client.xpi в окно браузера LibreWolf / Firefox и подтвердите установку.
 
-3. ПРИНЦИП РАБОТЫ:
-------------------
-- YouTube (youtube.com, googlevideo.com, ytimg.com) -> ВСЕГДА идет НАПРЯМУЮ (DIRECT). Пакеты забирает zapret (winws) на полной скорости без шифрования и нагрузки на VPN.
+4. ПРИНЦИП РАБОТЫ И ЗАЩИТА СЕТИ:
+--------------------------------
+- YouTube (youtube.com, googlevideo.com, ytimg.com) -> ВСЕГДА идет НАПРЯМУЮ (DIRECT). Пакеты обрабатывает zapret (winws на Windows, nfqws/tpws на Linux) на полной скорости без шифрования и нагрузки на VPN.
 - Локальная сеть (localhost, 127.0.0.1, 192.168.*, 10.*) -> ВСЕГДА идет НАПРЯМУЮ.
 - Российские сайты -> напрямую.
-- ChatGPT, Claude, Gemini, X/Twitter, Instagram, DeepSeek -> через VPN.
+- Gemini (gemini.google.com, Google AI Studio, Tasks) -> выделенный быстрый туннель США на порту 10820.
+- ChatGPT, Claude, X/Twitter, Instagram -> через основной VPN на порту 10818.
 - Умный PAC-скрипт автоматически использует доступное ядро (West Core 10818 или v2RayTun 10808).
-- Поддерживает любые подписки (VLESS, Trojan, VMess, Hysteria2, Shadowsocks).
+- Поддерживает любые подписки (VLESS Reality, Trojan, VMess, Hysteria2, Shadowsocks).
 - Вкладка "Серверы": кнопка "⚡ Мин. пинг" находит и подключает сервер с наименьшей задержкой.
-- Вкладка "Аудит & Ошибки": проводит проверку и выдает точечные рекомендации по устранению проблем.
+- Вкладка "Аудит & Ошибки": проводит глубокую проверку и выдает рекомендации по устранению проблем.

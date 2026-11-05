@@ -19,6 +19,8 @@ if os.path.exists(_dll_dir) and hasattr(os, "add_dll_directory"):
 import json
 import time
 import socket
+import signal
+import shutil
 import threading
 import subprocess
 import urllib.parse
@@ -36,10 +38,67 @@ except Exception:
 
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 REAL_CORE_DIR = os.path.realpath(CORE_DIR).lower()
-XRAY_EXE = os.path.join(CORE_DIR, "xraycore.exe")
 ACTIVE_CONFIG = os.path.join(CORE_DIR, "active_config.json")
 STATE_FILE = os.path.join(CORE_DIR, "state.json")
+PID_FILE = os.path.join(CORE_DIR, "west_service.pid")
 SERVERS_CACHE_FILE = os.path.join(CORE_DIR, "default_servers.json")
+
+XRAY_PROC_NAMES = ('xraycore.exe', 'xray.exe', 'xraycore', 'xray', 'xray-linux-64')
+
+def find_xray_binary():
+    """
+    Locates the Xray executable cross-platform (Linux & Windows).
+    Checks:
+    1. WEST_XRAY_BIN environment variable
+    2. Local core/ directory (xray, xraycore on Linux; xraycore.exe, xray.exe on Windows)
+    3. System PATH (shutil.which)
+    4. Standard Linux install locations (/usr/local/bin, /usr/bin, /opt/xray)
+    """
+    env_bin = os.environ.get("WEST_XRAY_BIN")
+    if env_bin and os.path.isfile(env_bin):
+        if os.name != "nt":
+            try:
+                os.chmod(env_bin, os.stat(env_bin).st_mode | 0o755)
+            except Exception:
+                pass
+        return env_bin
+
+    if os.name == "nt":
+        names = ["xraycore.exe", "xray.exe"]
+    else:
+        names = ["xray", "xraycore", "xray-linux-64", "xraycore.exe", "xray.exe"]
+
+    for name in names:
+        p = os.path.join(CORE_DIR, name)
+        if os.path.isfile(p):
+            if os.name != "nt":
+                try:
+                    os.chmod(p, os.stat(p).st_mode | 0o755)
+                except Exception:
+                    pass
+            return p
+
+    for name in names:
+        found = shutil.which(name)
+        if found and os.path.isfile(found):
+            return found
+
+    if os.name != "nt":
+        for sys_path in [
+            "/usr/local/bin/xray",
+            "/usr/bin/xray",
+            "/opt/xray/xray",
+            "/usr/local/bin/xraycore",
+            "/usr/bin/xraycore",
+            os.path.expanduser("~/.local/bin/xray"),
+            os.path.expanduser("~/bin/xray")
+        ]:
+            if os.path.isfile(sys_path):
+                return sys_path
+
+    return os.path.join(CORE_DIR, "xraycore.exe" if os.name == "nt" else "xray")
+
+XRAY_EXE = find_xray_binary()
 
 SOCKS_PORT = 10818
 HTTP_PORT = 10819
@@ -206,7 +265,7 @@ def release_service_port():
             for p in psutil.process_iter(['pid', 'name']):
                 try:
                     name = (p.info.get('name') or '').lower()
-                    if name in ('pythonw.exe', 'python.exe') and p.pid != my_pid:
+                    if name.startswith('python') and p.pid != my_pid:
                         cmd = " ".join(p.cmdline() or []).lower()
                         if "west_service" in cmd:
                             p.terminate()
@@ -474,7 +533,7 @@ def capture_stream(stream):
 
 def get_west_xray_pids():
     """
-    Finds ONLY West Client's own xraycore processes.
+    Finds ONLY West Client's own xraycore processes cross-platform (Windows & Linux).
     STRICT RULE: Do NOT kill or touch external VPNs, v2RayTun, or other xraycore instances running for other tools.
     Only target West Client's own xraycore running active_config.json or located in West Client core dir.
     """
@@ -506,7 +565,7 @@ def get_west_xray_pids():
         for p in psutil.process_iter(['pid', 'name']):
             try:
                 name = (p.info.get('name') or '').lower()
-                if name in ('xraycore.exe', 'xray.exe'):
+                if name in XRAY_PROC_NAMES or name.startswith('xray'):
                     pids.add(p.pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
@@ -514,19 +573,45 @@ def get_west_xray_pids():
     except Exception:
         psutil_ok = False
 
-    # 4. Fallback to PowerShell ONLY if psutil failed or is unavailable
+    # 4. Fallback ONLY if psutil failed or is unavailable
     if not psutil_ok and not pids:
-        try:
-            ps_cmd = [
-                "powershell", "-NoProfile", "-Command",
-                "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*xray*') -and ($_.CommandLine -like '*active_config.json*') } | Select-Object -ExpandProperty ProcessId"
-            ]
-            res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS)
-            for line in res.stdout.split():
-                if line.strip().isdigit():
-                    pids.add(int(line.strip()))
-        except Exception:
-            pass
+        if os.name == "nt":
+            try:
+                ps_cmd = [
+                    "powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like '*xray*') -and ($_.CommandLine -like '*active_config.json*') } | Select-Object -ExpandProperty ProcessId"
+                ]
+                res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5, creationflags=CREATION_FLAGS)
+                for line in res.stdout.split():
+                    if line.strip().isdigit():
+                        pids.add(int(line.strip()))
+            except Exception:
+                pass
+        else:
+            # POSIX fallback via /proc and pgrep
+            try:
+                if os.path.isdir("/proc"):
+                    for entry in os.listdir("/proc"):
+                        if entry.isdigit():
+                            pid = int(entry)
+                            cmdline_path = f"/proc/{pid}/cmdline"
+                            try:
+                                with open(cmdline_path, "rb") as cf:
+                                    raw_cmd = cf.read().decode("utf-8", "ignore").replace("\x00", " ").lower()
+                                if "active_config.json" in raw_cmd and "xray" in raw_cmd:
+                                    pids.add(pid)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            if not pids:
+                try:
+                    p_res = subprocess.run(["pgrep", "-f", "active_config.json"], capture_output=True, text=True, timeout=3)
+                    for line in p_res.stdout.split():
+                        if line.strip().isdigit():
+                            pids.add(int(line.strip()))
+                except Exception:
+                    pass
 
     # Strict safety filter: verify every PID is genuinely a West Client xraycore process
     verified_pids = []
@@ -535,7 +620,7 @@ def get_west_xray_pids():
         try:
             proc = psutil.Process(pid)
             name = proc.name().lower()
-            if name not in ('xraycore.exe', 'xray.exe'):
+            if not (name in XRAY_PROC_NAMES or name.startswith('xray')):
                 continue
 
             exe_path = ""
@@ -553,17 +638,28 @@ def get_west_xray_pids():
             if (REAL_CORE_DIR in exe_path) or ("active_config.json" in cmd) or ("west client" in exe_path) or ("west client" in cmd):
                 is_safe = True
         except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
-            try:
-                ps_verify = [
-                    "powershell", "-NoProfile", "-Command",
-                    f"(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -eq {pid} }} | Select-Object -ExpandProperty CommandLine)"
-                ]
-                v_res = subprocess.run(ps_verify, capture_output=True, text=True, timeout=3, creationflags=CREATION_FLAGS)
-                v_out = v_res.stdout.lower()
-                if "active_config.json" in v_out or "west client" in v_out:
-                    is_safe = True
-            except Exception:
-                pass
+            if os.name == "nt":
+                try:
+                    ps_verify = [
+                        "powershell", "-NoProfile", "-Command",
+                        f"(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -eq {pid} }} | Select-Object -ExpandProperty CommandLine)"
+                    ]
+                    v_res = subprocess.run(ps_verify, capture_output=True, text=True, timeout=3, creationflags=CREATION_FLAGS)
+                    v_out = v_res.stdout.lower()
+                    if "active_config.json" in v_out or "west client" in v_out:
+                        is_safe = True
+                except Exception:
+                    pass
+            else:
+                try:
+                    cmd_file = f"/proc/{pid}/cmdline"
+                    if os.path.exists(cmd_file):
+                        with open(cmd_file, "rb") as cf:
+                            c_bytes = cf.read().decode("utf-8", "ignore").replace("\x00", " ").lower()
+                        if "active_config.json" in c_bytes or REAL_CORE_DIR in c_bytes:
+                            is_safe = True
+                except Exception:
+                    pass
         if is_safe:
             verified_pids.append(pid)
 
@@ -596,10 +692,16 @@ def stop_xray():
         except psutil.NoSuchProcess:
             pass
         except Exception:
-            try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
-            except Exception:
-                pass
+            if os.name == "nt":
+                try:
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=CREATION_FLAGS)
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
 
     # 3. Wait for inbound ports to be released and freely bindable
     deadline = time.time() + 2.5
@@ -634,10 +736,20 @@ def start_xray(server_obj, retry_on_bind=True, validate_connectivity=True):
             break
         time.sleep(0.05)
 
+    xray_bin = find_xray_binary()
+    if not os.path.isfile(xray_bin):
+        return False, f"Исполняемый файл Xray не найден ({xray_bin}). Поместите бинарник xray в папку core/ или установите в систему."
+
+    if os.name != "nt":
+        try:
+            os.chmod(xray_bin, os.stat(xray_bin).st_mode | 0o755)
+        except Exception:
+            pass
+
     creation_flags = 0x08000000 if os.name == "nt" else 0
     try:
         xray_process = subprocess.Popen(
-            [XRAY_EXE, "run", "--path", ACTIVE_CONFIG, "--asset-dir", CORE_DIR],
+            [xray_bin, "run", "--path", ACTIVE_CONFIG, "--asset-dir", CORE_DIR],
             creationflags=creation_flags,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
@@ -1216,15 +1328,45 @@ class CoreHandler(BaseHTTPRequestHandler):
 
         elif path == "/shutdown":
             self.send_json(200, {"success": True, "message": "West Service shutting down"})
-            threading.Thread(target=lambda: (time.sleep(0.2), stop_xray(), os._exit(0))).start()
+            def do_shutdown():
+                time.sleep(0.2)
+                stop_xray()
+                try:
+                    if os.path.exists(PID_FILE):
+                        os.remove(PID_FILE)
+                except Exception:
+                    pass
+                os._exit(0)
+            threading.Thread(target=do_shutdown, daemon=True).start()
 
         else:
             self.send_response(404)
             self.end_headers()
 
+def sig_handler(signum, frame):
+    stop_xray()
+    try:
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+    except Exception:
+        pass
+    sys.exit(0)
+
 def main():
     global current_server
     try:
+        try:
+            signal.signal(signal.SIGTERM, sig_handler)
+            signal.signal(signal.SIGINT, sig_handler)
+        except Exception:
+            pass
+
+        try:
+            with open(PID_FILE, "w", encoding="utf-8") as pf:
+                pf.write(str(os.getpid()))
+        except Exception:
+            pass
+
         load_state()
         load_server_pool()
         if not can_bind_port(SERVICE_PORT):
@@ -1268,6 +1410,13 @@ def main():
         import traceback
         with open(os.path.join(CORE_DIR, "crash.log"), "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
+    finally:
+        stop_xray()
+        try:
+            if os.path.exists(PID_FILE):
+                os.remove(PID_FILE)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
